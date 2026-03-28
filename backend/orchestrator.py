@@ -1,11 +1,4 @@
-import json
-import os
-import re
 from typing import Any, AsyncGenerator
-
-import google.generativeai as genai
-import httpx
-from dotenv import load_dotenv
 
 from agents.communication_agent import format_provider_message
 from agents.emergency_agent import emergency_response
@@ -13,104 +6,9 @@ from agents.language_agent import process_language
 from agents.navigation_agent import find_nearby_hospitals
 from agents.summary_agent import build_summary
 from agents.triage_agent import triage_symptoms
+from backend.llm_agents import estimate_costs, run_triage, simplify_and_translate
+from backend.maps import get_nearby_hospitals
 from shared.schemas import AnalyzeRequest, AnalyzeResponse, CommunicationResponse
-
-load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-
-
-def _extract_json_block(text: str) -> dict[str, Any]:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("No JSON object found in model response")
-
-    return json.loads(cleaned[start : end + 1])
-
-
-async def run_triage(user_message: str, history: str) -> dict[str, Any]:
-    if not GOOGLE_API_KEY:
-        return {
-            "severity": "MEDIUM",
-            "reason": "GOOGLE_API_KEY is missing; using fallback triage.",
-            "response_text": "I could not run full triage right now. If symptoms are severe, seek urgent care.",
-        }
-
-    prompt = (
-        "You are a medical triage assistant. "
-        "Classify the severity into: LOW, MEDIUM, HIGH, CRITICAL based on the user message and history. "
-        "You MUST return valid JSON exactly in this format: "
-        "{\"severity\":\"...\",\"reason\":\"...\",\"response_text\":\"A calm, brief response to the user\"}.\n\n"
-        f"Recent conversation history:\n{history or 'No prior history.'}\n\n"
-        f"Latest user message:\n{user_message}"
-    )
-
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    response = await model.generate_content_async(prompt)
-    text = getattr(response, "text", "") or ""
-
-    try:
-        parsed = _extract_json_block(text)
-    except Exception:
-        parsed = {
-            "severity": "MEDIUM",
-            "reason": "Model response could not be parsed as JSON.",
-            "response_text": "I recommend getting checked by a healthcare professional soon.",
-        }
-
-    severity = str(parsed.get("severity", "MEDIUM")).upper()
-    if severity not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
-        severity = "MEDIUM"
-
-    return {
-        "severity": severity,
-        "reason": str(parsed.get("reason", "No reason provided.")),
-        "response_text": str(parsed.get("response_text", "Please seek medical care if symptoms worsen.")),
-    }
-
-
-async def get_nearby_hospitals(lat: float, lng: float) -> list[dict[str, Any]]:
-    if not GOOGLE_API_KEY:
-        return []
-
-    params = {
-        "location": f"{lat},{lng}",
-        "radius": 5000,
-        "type": "hospital",
-        "key": GOOGLE_API_KEY,
-    }
-    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPError:
-        return []
-
-    hospitals: list[dict[str, Any]] = []
-    for item in payload.get("results", [])[:3]:
-        geo = item.get("geometry", {}).get("location", {})
-        hospitals.append(
-            {
-                "name": item.get("name", "Unknown Hospital"),
-                "address": item.get("vicinity", item.get("formatted_address", "Address unavailable")),
-                "location": {
-                    "lat": geo.get("lat"),
-                    "lng": geo.get("lng"),
-                },
-            }
-        )
-
-    return hospitals
 
 
 async def stream_mock_orchestrator(
@@ -120,6 +18,7 @@ async def stream_mock_orchestrator(
     history_str: str,
     latitude: float | None = None,
     longitude: float | None = None,
+    target_language: str = "en",
 ) -> AsyncGenerator[dict[str, Any], None]:
     _ = (session_id, history)
 
@@ -136,6 +35,20 @@ async def stream_mock_orchestrator(
 
     yield {
         "status": "processing",
+        "agent": "Pricing Agent",
+        "message": "Estimating treatment costs...",
+    }
+    cost_data = await estimate_costs(reason)
+
+    yield {
+        "status": "processing",
+        "agent": "Language Agent",
+        "message": f"Translating and simplifying to {target_language}...",
+    }
+    translated_text = await simplify_and_translate(response_text, target_language)
+
+    yield {
+        "status": "processing",
         "agent": "Maps Agent",
         "message": "Checking location for nearby facilities...",
     }
@@ -148,8 +61,9 @@ async def stream_mock_orchestrator(
         "type": "final",
         "severity": severity,
         "reason": reason,
-        "response": response_text,
+        "response": translated_text,
         "hospitals": hospital_list,
+        "estimated_costs": cost_data,
     }
 
 

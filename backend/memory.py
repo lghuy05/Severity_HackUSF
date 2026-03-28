@@ -4,6 +4,7 @@ from threading import Lock
 class InMemorySessionStore:
     def __init__(self) -> None:
         self._data: dict[str, list[dict[str, str]]] = {}
+        self._medical_history: dict[str, str] = {}
         self._lock = Lock()
 
     def add_message(self, session_id: str, role: str, content: str) -> None:
@@ -17,6 +18,15 @@ class InMemorySessionStore:
     def clear_session(self, session_id: str) -> None:
         with self._lock:
             self._data.pop(session_id, None)
+            self._medical_history.pop(session_id, None)
+
+    def set_medical_history(self, session_id: str, medical_history: str) -> None:
+        with self._lock:
+            self._medical_history[session_id] = medical_history
+
+    def get_medical_history(self, session_id: str) -> str:
+        with self._lock:
+            return self._medical_history.get(session_id, "")
 
 
 session_store = InMemorySessionStore()
@@ -32,6 +42,14 @@ def get_history(session_id: str) -> list[dict[str, str]]:
 
 def clear_session(session_id: str) -> None:
     session_store.clear_session(session_id)
+
+
+def set_medical_history(session_id: str, medical_history: str) -> None:
+    session_store.set_medical_history(session_id, medical_history)
+
+
+def get_medical_history(session_id: str) -> str:
+    return session_store.get_medical_history(session_id)
 
 
 def get_emergency_context(session_id: str, limit: int = 5) -> str:
