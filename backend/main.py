@@ -1,23 +1,33 @@
 """
-Health Equity Bridge – FastAPI Backend
-======================================
+Health Equity Bridge -- FastAPI Backend
+=======================================
 Serves both the original /analyze & /communicate endpoints
 AND the new real-time streaming /chat (WebSocket) + /chat/stream (SSE) endpoints.
+Now wired to live Gemini triage + Google Places APIs.
 """
 
 from datetime import datetime
 from pathlib import Path
 import json
+import os
 import sys
 import uuid
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
-# Path setup – keep the project root importable
+# Load environment variables from frontend/.env.local  (shared API key)
+# ---------------------------------------------------------------------------
+_ENV_PATH = Path(__file__).resolve().parents[1] / "frontend" / ".env.local"
+load_dotenv(_ENV_PATH)
+print(f"[OK] Loaded env from {_ENV_PATH}  (GOOGLE_API_KEY={'set' if os.getenv('GOOGLE_API_KEY') else 'MISSING'})")
+
+# ---------------------------------------------------------------------------
+# Path setup -- keep the project root importable
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -31,7 +41,7 @@ from backend.session_manager import (
     list_sessions,
     get_emergency_context,
 )
-from backend.mock_orchestrator import stream_orchestrator
+from backend.live_orchestrator import stream_orchestrator
 from shared.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -44,8 +54,8 @@ from shared.schemas import (
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="Health Equity Bridge API",
-    version="0.2.0",
-    description="Multi-agent medical triage backend with real-time streaming",
+    version="0.3.0",
+    description="Multi-agent medical triage backend with real-time streaming (live APIs)",
 )
 
 app.add_middleware(
@@ -64,6 +74,8 @@ class ChatRequest(BaseModel):
     """Incoming chat message from the frontend (used by the SSE endpoint)."""
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     message: str
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class SessionInfo(BaseModel):
@@ -137,7 +149,7 @@ def emergency_dispatch(payload: EmergencyPayload):
     For now it prints a loud console warning and returns confirmation.
     """
     print("\n" + "=" * 60)
-    print("🚨🚨🚨  MOCK 911 DISPATCH RECEIVED  🚨🚨🚨")
+    print("!!!  MOCK 911 DISPATCH RECEIVED  !!!")
     print("=" * 60)
     print(f"  Session   : {payload.session_id}")
     print(f"  Urgency   : {payload.urgency_level}")
@@ -153,7 +165,7 @@ def emergency_dispatch(payload: EmergencyPayload):
 
 
 # ===================================================================
-#  WEBSOCKET  /chat  (preferred – bi-directional)
+#  WEBSOCKET  /chat  (preferred -- bi-directional)
 # ===================================================================
 
 @app.websocket("/chat")
@@ -162,10 +174,11 @@ async def websocket_chat(ws: WebSocket):
     Bi-directional WebSocket chat.
 
     Client sends JSON:
-        {"session_id": "...", "message": "I have a headache"}
+        {"session_id": "...", "message": "I have a headache",
+         "latitude": 28.06, "longitude": -82.41}
 
     Server streams back newline-delimited JSON events:
-        {"type": "status", "agent": "triage", "message": "Evaluating…"}
+        {"type": "status", "agent": "Triage Agent", "message": "Analyzing..."}
         ...
         {"type": "final", "severity": "HIGH", ...}
     """
@@ -179,6 +192,8 @@ async def websocket_chat(ws: WebSocket):
 
             session_id = payload.get("session_id", str(uuid.uuid4()))
             user_message = payload.get("message", "")
+            latitude = payload.get("latitude")
+            longitude = payload.get("longitude")
 
             if not user_message:
                 await ws.send_text(
@@ -194,7 +209,8 @@ async def websocket_chat(ws: WebSocket):
             final_response = None
 
             async for event_json in stream_orchestrator(
-                session_id, user_message, history
+                session_id, user_message, history,
+                latitude=latitude, longitude=longitude,
             ):
                 await ws.send_text(event_json)
                 event = json.loads(event_json)
@@ -206,7 +222,7 @@ async def websocket_chat(ws: WebSocket):
                 add_message(session_id, "assistant", final_response)
 
     except WebSocketDisconnect:
-        pass  # client disconnected – nothing to clean up
+        pass  # client disconnected -- nothing to clean up
     except Exception as exc:
         # Try to inform the client before closing
         try:
@@ -218,7 +234,7 @@ async def websocket_chat(ws: WebSocket):
 
 
 # ===================================================================
-#  SSE  /chat/stream  (alternative – works with plain fetch)
+#  SSE  /chat/stream  (alternative -- works with plain fetch)
 # ===================================================================
 
 @app.post("/chat/stream")
@@ -226,15 +242,14 @@ async def sse_chat(request: ChatRequest):
     """
     Server-Sent Events streaming endpoint.
 
-    Accepts a JSON body with `session_id` and `message`.
+    Accepts a JSON body with `session_id`, `message`, and optional
+    `latitude` / `longitude`.
     Returns a text/event-stream where each line is a JSON event.
-
-    Usage (frontend):
-        const res = await fetch('/chat/stream', { method: 'POST', body: ... });
-        const reader = res.body.getReader();
     """
     session_id = request.session_id
     user_message = request.message
+    latitude = request.latitude
+    longitude = request.longitude
 
     # persist user message
     add_message(session_id, "user", user_message)
@@ -244,7 +259,8 @@ async def sse_chat(request: ChatRequest):
         final_response = None
 
         async for event_json in stream_orchestrator(
-            session_id, user_message, history
+            session_id, user_message, history,
+            latitude=latitude, longitude=longitude,
         ):
             # SSE format: "data: {json}\n\n"
             yield f"data: {event_json}\n\n"
@@ -262,6 +278,6 @@ async def sse_chat(request: ChatRequest):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # disable nginx buffering if behind proxy
+            "X-Accel-Buffering": "no",
         },
     )
