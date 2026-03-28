@@ -1,30 +1,31 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, ShieldAlert, Sparkles } from "lucide-react";
 
-import { AgentFlowPanel } from "@/components/AgentFlowPanel";
-import { Chat } from "@/components/Chat";
+import { AgentFlow } from "@/components/AgentFlow";
+import { ChatView } from "@/components/ChatView";
+import { CostPanel } from "@/components/CostPanel";
 import { EmergencyOverlay } from "@/components/EmergencyOverlay";
-import { HospitalList } from "@/components/HospitalList";
-import { InputBox } from "@/components/InputBox";
-import { MapView } from "@/components/MapView";
-import { VoiceButton } from "@/components/VoiceButton";
+import { InputBar } from "@/components/InputBar";
+import { MapPanel } from "@/components/MapPanel";
+import { ProfilePanel } from "@/components/ProfilePanel";
+import { StepTransition } from "@/components/StepTransition";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { analyzeSymptoms } from "@/lib/api";
-import type { AgentStep, AnalyzeResponse, ChatMessage } from "../../shared/types";
+import type { AnalyzeResponse, ChatMessage } from "@shared/types";
 
-type AppState = "idle" | "processing" | "decision" | "results" | "emergency";
+type AppState = "idle" | "processing" | "diagnosis" | "navigation" | "cost" | "contact" | "emergency";
 
-const INITIAL_STEPS: AgentStep[] = [
-  { key: "voice", label: "Voice", status: "idle", detail: "Waiting for input" },
-  { key: "language", label: "Language", status: "idle", detail: "Translation layer ready" },
-  { key: "triage", label: "Triage", status: "idle", detail: "Clinical reasoning on standby" },
-  { key: "navigation", label: "Navigation", status: "idle", detail: "Care search paused" },
-  { key: "action", label: "Action", status: "idle", detail: "Next-step guidance pending" },
-];
+const PROCESSING_STEPS = [
+  { step: "voice", label: "Understanding symptoms..." },
+  { step: "language", label: "Translating..." },
+  { step: "triage", label: "Analyzing risk..." },
+] as const;
 
-const DEMO_LOCATION = "San Francisco, CA";
-const RESULTS_DELAY_MS = 1400;
-const EMERGENCY_DELAY_MS = 1800;
+const SAMPLE_PROMPT = "I feel chest pain and dizzy";
+const DEFAULT_LOCATION = "San Francisco, CA";
 
 declare global {
   interface Window {
@@ -47,35 +48,42 @@ declare global {
   }
 }
 
-function updateStep(
-  steps: AgentStep[],
-  key: string,
-  status: AgentStep["status"],
-  detail?: string,
-): AgentStep[] {
-  return steps.map((step) => (step.key === key ? { ...step, status, detail: detail ?? step.detail } : step));
-}
-
-function sleep(ms: number) {
+function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default function HomePage() {
+function buildDiagnosisMessages(result: AnalyzeResponse): ChatMessage[] {
+  return [
+    {
+      id: "assistant-diagnosis",
+      role: "assistant",
+      content: `I simplified your symptoms as: "${result.language_output.simplified_text}".`,
+    },
+    {
+      id: "assistant-triage",
+      role: "assistant",
+      content: `${result.triage.explanation} ${result.navigation.recommendation}`,
+    },
+    {
+      id: "assistant-provider",
+      role: "assistant",
+      content: result.provider_message,
+    },
+  ];
+}
+
+export default function Page() {
   const [appState, setAppState] = useState<AppState>("idle");
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "Describe what you feel. I’ll interpret it, assess urgency, and guide you to the right care path.",
-    },
-  ]);
-  const [steps, setSteps] = useState<AgentStep[]>(INITIAL_STEPS);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeFlowStep, setActiveFlowStep] = useState<string>("voice");
+  const [processingLabel, setProcessingLabel] = useState<string>(PROCESSING_STEPS[0].label);
   const [isListening, setIsListening] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
+  const [profileSent, setProfileSent] = useState(false);
+  const [showEmergencyOverlay, setShowEmergencyOverlay] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const flowTimeoutsRef = useRef<number[]>([]);
 
   useEffect(() => {
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
@@ -90,104 +98,88 @@ export default function HomePage() {
     recognition.onresult = (event) => {
       const transcript = event.results[0]?.[0]?.transcript ?? "";
       setInput(transcript);
-      setSteps((current) => updateStep(current, "voice", "done", "Voice converted to text"));
+      setIsListening(false);
     };
     recognition.onend = () => setIsListening(false);
     recognitionRef.current = recognition;
   }, []);
 
-  useEffect(() => {
-    return () => {
-      flowTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout));
-    };
-  }, []);
+  const hospitals = analysis?.navigation.hospitals ?? [];
+  const riskLevel = analysis?.triage.risk_level;
+  const heroTitle = useMemo(
+    () => ["A calmer path", "from symptoms", "to care."],
+    [],
+  );
 
-  function scheduleTransition(nextState: AppState, delay: number) {
-    const timeout = window.setTimeout(() => setAppState(nextState), delay);
-    flowTimeoutsRef.current.push(timeout);
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!input.trim() || loading) {
+  async function startFlow(prompt?: string) {
+    const nextInput = (prompt ?? input).trim();
+    if (!nextInput) {
       return;
     }
 
-    flowTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout));
-    flowTimeoutsRef.current = [];
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: nextInput,
+    };
 
-    const userInput = input.trim();
-    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: userInput };
-
-    setMessages((current) => [...current, userMessage]);
-    setLoading(true);
+    setInput("");
     setAnalysis(null);
-    setSteps(INITIAL_STEPS);
+    setProfileSent(false);
+    setShowEmergencyOverlay(false);
+    setMessages([userMessage]);
     setAppState("processing");
-    setSteps((current) => updateStep(current, "voice", "running", "Listening..."));
+    setIsTyping(true);
+    setActiveFlowStep("voice");
+    setProcessingLabel(PROCESSING_STEPS[0].label);
 
     try {
-      await sleep(350);
-      setSteps((current) => updateStep(current, "voice", "done", "Listening complete"));
-      setSteps((current) => updateStep(current, "language", "running", "Translating..."));
-
-      await sleep(450);
-      setSteps((current) => updateStep(current, "language", "done", "Meaning normalized"));
-      setSteps((current) => updateStep(current, "triage", "running", "Analyzing symptoms..."));
-
-      const result = await analyzeSymptoms({ text: userInput, location: DEMO_LOCATION });
-      setAnalysis(result);
-
-      await sleep(650);
-      setSteps((current) => updateStep(current, "triage", "done", `Risk level: ${result.triage.risk_level}`));
-      setSteps((current) => updateStep(current, "navigation", "running", "Finding care..."));
-
-      await sleep(550);
-      setSteps((current) => updateStep(current, "navigation", "done", `${result.navigation.hospitals.length} care options ready`));
-      setSteps((current) => updateStep(current, "action", "running", "Preparing next step"));
-
-      await sleep(500);
-      setSteps((current) => updateStep(current, "action", "done", "Response ready"));
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `${result.triage.explanation} ${result.navigation.recommendation} ${result.provider_message}`,
-        },
-      ]);
-
-      if (result.triage.risk_level === "high") {
-        setAppState("emergency");
-        scheduleTransition("results", EMERGENCY_DELAY_MS);
-      } else {
-        setAppState("decision");
-        scheduleTransition("results", RESULTS_DELAY_MS);
+      for (const item of PROCESSING_STEPS) {
+        setActiveFlowStep(item.step);
+        setProcessingLabel(item.label);
+        await wait(700);
       }
 
-      setInput("");
-    } catch (error) {
-      void error;
+      const result = await analyzeSymptoms({ text: nextInput, location: DEFAULT_LOCATION });
+      setAnalysis(result);
+      setMessages((current) => [...current, ...buildDiagnosisMessages(result)]);
+      setIsTyping(false);
+
+      if (result.emergency_flag || result.triage.risk_level === "high") {
+        setActiveFlowStep("action");
+        setAppState("emergency");
+        return;
+      }
+
+      setAppState("diagnosis");
+      setActiveFlowStep("triage");
+      await wait(1100);
+      setAppState("navigation");
+      setActiveFlowStep("navigation");
+      await wait(1100);
+      setAppState("cost");
+      await wait(1100);
+      setAppState("contact");
+      setActiveFlowStep("action");
+    } catch {
+      setIsTyping(false);
+      setAppState("diagnosis");
+      setAnalysis(null);
       setMessages((current) => [
         ...current,
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: "The analysis request failed. Check that the FastAPI backend is running on port 8000.",
+          content: "I couldn’t reach `/api/analyze` right now. The frontend flow is ready, but the backend needs to be connected.",
         },
       ]);
-      setSteps(INITIAL_STEPS);
-      setAppState("idle");
-    } finally {
-      setLoading(false);
     }
   }
 
   function handleVoiceToggle() {
     const recognition = recognitionRef.current;
     if (!recognition) {
-      setInput("I feel chest pain and dizzy");
-      setSteps((current) => updateStep(current, "voice", "done", "Voice mocked with fallback text"));
+      setInput(SAMPLE_PROMPT);
       return;
     }
 
@@ -197,146 +189,140 @@ export default function HomePage() {
       return;
     }
 
-    setIsListening(true);
-    setSteps((current) => updateStep(current, "voice", "running", "Listening"));
     recognition.start();
+    setIsListening(true);
   }
 
-  const showChat = appState !== "idle";
-  const showDecision = Boolean(analysis) && (appState === "decision" || appState === "results" || appState === "emergency");
-  const showResults = Boolean(analysis) && appState === "results";
-  const riskTone =
-    analysis?.triage.risk_level === "high"
-      ? "border-rose-400/20 bg-rose-500/10 text-rose-300"
-      : analysis?.triage.risk_level === "medium"
-        ? "border-amber-400/20 bg-amber-500/10 text-amber-300"
-        : "border-emerald-400/20 bg-emerald-500/10 text-emerald-300";
-
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-6 md:px-8 md:py-8">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(59,130,246,0.08),transparent_20%),radial-gradient(circle_at_80%_10%,rgba(129,140,248,0.1),transparent_22%)]" />
+    <main className="relative min-h-screen overflow-hidden bg-[#0b0f14] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.18),transparent_28%),radial-gradient(circle_at_85%_16%,rgba(129,140,248,0.16),transparent_24%),linear-gradient(180deg,#0b0f14_0%,#0d1320_48%,#0b0f14_100%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:120px_120px] opacity-[0.18]" />
 
-      <AgentFlowPanel steps={steps} visible={appState !== "idle"} />
+      <AgentFlow activeStep={activeFlowStep} visible={appState !== "idle"} />
       <EmergencyOverlay
-        instructions={analysis?.emergency.instructions ?? []}
-        visible={appState === "emergency" || (appState === "results" && analysis?.triage.risk_level === "high")}
+        open={showEmergencyOverlay}
+        instructions={analysis?.emergency.instructions ?? ["Call 911 immediately.", "Do not drive yourself.", "Stay with someone if possible."]}
+        onClose={() => setShowEmergencyOverlay(false)}
       />
 
-      <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-7xl items-center justify-center">
-        <section className={["w-full transition-all duration-700", appState === "idle" ? "max-w-3xl" : "max-w-7xl"].join(" ")}>
-          <div
-            className={[
-              "transition-all duration-700",
-              appState === "idle" ? "flex min-h-[80vh] flex-col items-center justify-center text-center" : "space-y-6 pt-16",
-            ].join(" ")}
-          >
-            <div className={appState === "idle" ? "max-w-2xl" : "max-w-3xl"}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-200/70">Health Equity Bridge</p>
-              <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white md:text-6xl">
-                From symptom uncertainty to a clear care decision.
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 pb-8 pt-8 sm:px-6 lg:px-8">
+        {appState === "idle" ? (
+          <section className="flex flex-1 flex-col items-center justify-center text-center">
+            <Badge className="mb-6">AI healthcare navigator</Badge>
+            <div className="max-w-4xl">
+              <h1 className="text-balance text-5xl font-semibold tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
+                {heroTitle[0]} <span className="bg-gradient-to-r from-sky-200 via-white to-violet-200 bg-clip-text text-transparent">{heroTitle[1]}</span>{" "}
+                {heroTitle[2]}
               </h1>
-              <p className="mt-4 text-base leading-7 text-slate-400 md:text-lg">
-                A guided AI triage experience that listens, reasons, and reveals the right next action at the right moment.
+              <p className="mx-auto mt-6 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
+                Describe symptoms once. The system simplifies, translates, diagnoses urgency, finds care, compares cost,
+                and prepares a hospital handoff without dumping every panel on screen at once.
               </p>
             </div>
 
-            <div className={appState === "idle" ? "mt-10 w-full max-w-2xl" : "w-full"}>
-              <InputBox value={input} disabled={loading} onChange={setInput} onSubmit={handleSubmit}>
-                <VoiceButton isListening={isListening} onToggle={handleVoiceToggle} />
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="inline-flex h-14 items-center justify-center rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 px-6 text-sm font-semibold text-white transition duration-300 hover:shadow-[0_0_30px_rgba(99,102,241,0.35)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {loading ? "Analyzing..." : "Continue"}
-                </button>
-              </InputBox>
-
-              {appState === "idle" ? (
-                <p className="mt-4 text-sm text-slate-500">Try: “I feel chest pain and dizzy”</p>
-              ) : null}
+            <div className="mt-10 w-full max-w-4xl">
+              <InputBar
+                value={input}
+                onChange={setInput}
+                onSubmit={() => void startFlow()}
+                onVoiceToggle={handleVoiceToggle}
+                isListening={isListening}
+                compact={false}
+              />
             </div>
 
-            {showChat ? (
-              <div className="w-full animate-fade-in space-y-6">
-                <Chat messages={messages} isTyping={appState === "processing"} />
-
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-sm text-slate-400">
+              <button
+                type="button"
+                onClick={() => {
+                  setInput(SAMPLE_PROMPT);
+                  void startFlow(SAMPLE_PROMPT);
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 transition hover:bg-white/10"
+              >
+                Try sample flow
+                <ArrowRight className="h-4 w-4" />
+              </button>
+              <span className="inline-flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-sky-300" />
+                Voice, translation, triage, routing, cost, contact
+              </span>
+            </div>
+          </section>
+        ) : (
+          <section className="grid flex-1 gap-6 pt-20 lg:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
+            <div className="flex min-h-0 flex-col gap-5">
+              <div className="rounded-[30px] border border-white/10 bg-white/[0.045] p-4 shadow-[0_24px_80px_rgba(4,9,22,0.35)] backdrop-blur-2xl">
                 {appState === "processing" ? (
-                  <div className="rounded-[32px] border border-white/10 bg-white/5 p-5 text-left shadow-panel backdrop-blur-2xl">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Processing</p>
-                    <div className="mt-4 grid gap-3 md:grid-cols-4">
-                      {["Listening...", "Translating...", "Analyzing symptoms...", "Finding care..."].map((item, index) => (
-                        <div
-                          key={item}
-                          className="animate-fade-in rounded-[22px] border border-white/8 bg-[#0E141C] p-4 text-sm text-slate-300"
-                          style={{ animationDelay: `${index * 120}ms` }}
-                        >
-                          {item}
-                        </div>
-                      ))}
+                  <div className="flex items-center justify-between gap-4 rounded-[24px] bg-[#0f1726]/84 px-5 py-5">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Agent status</p>
+                      <p className="mt-2 text-lg font-medium text-white">{processingLabel}</p>
+                    </div>
+                    <div className="flex items-center gap-2 rounded-full border border-emerald-400/[0.18] bg-emerald-500/[0.10] px-4 py-2 text-sm text-emerald-200">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Processing
                     </div>
                   </div>
                 ) : null}
 
-                {showDecision ? (
-                  <div className="animate-fade-in rounded-[32px] border border-white/10 bg-white/6 p-6 text-left shadow-panel backdrop-blur-2xl">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Decision</p>
-                    <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div className="max-w-3xl">
-                        <h2 className="text-2xl font-semibold text-white">Here’s what the system sees right now.</h2>
-                        <p className="mt-3 text-base leading-7 text-slate-300">{analysis?.triage.explanation}</p>
-                        <p className="mt-3 text-sm leading-6 text-slate-400">{analysis?.navigation.recommendation}</p>
-                      </div>
-                      <div className={`rounded-full border px-4 py-2 text-sm font-semibold capitalize ${riskTone}`}>
-                        {analysis?.triage.risk_level} risk
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
-                {showResults ? (
-                  <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-                    <section className="space-y-6">
-                      <div className="rounded-[32px] border border-white/10 bg-white/6 p-6 shadow-panel backdrop-blur-2xl">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Explanation</p>
-                        <div className="mt-4 space-y-4">
-                          <div className="rounded-[24px] border border-white/8 bg-[#0E141C] p-4">
-                            <p className="text-sm font-medium text-slate-400">Detected language</p>
-                            <p className="mt-1 text-lg font-semibold text-white">{analysis?.language_output.detected_language}</p>
-                          </div>
-                          <div className="rounded-[24px] border border-white/8 bg-[#0E141C] p-4">
-                            <p className="text-sm font-medium text-slate-400">AI summary</p>
-                            <p className="mt-2 text-sm leading-6 text-slate-200">{analysis?.provider_message}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </section>
-
-                    <section className="space-y-4 animate-slide-in-right">
-                      <div className="rounded-[32px] border border-white/10 bg-white/6 p-5 shadow-panel backdrop-blur-2xl">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">Nearby care</p>
-                            <h2 className="mt-1 text-xl font-semibold text-white">Hospital map</h2>
-                          </div>
-                          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
-                            {DEMO_LOCATION}
-                          </span>
-                        </div>
-
-                        <div className="mt-4 animate-fade-in">
-                          <MapView location={DEMO_LOCATION} />
-                        </div>
-                      </div>
-
-                      <HospitalList hospitals={analysis?.navigation.hospitals ?? []} />
-                    </section>
-                  </div>
-                ) : null}
+                <ChatView
+                  messages={messages}
+                  isTyping={isTyping}
+                  riskLevel={riskLevel}
+                  title={appState === "processing" ? "Analyzing your request" : "Guided care conversation"}
+                />
               </div>
-            ) : null}
-          </div>
-        </section>
+
+              <div className="sticky bottom-0">
+                <InputBar
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={() => void startFlow()}
+                  onVoiceToggle={handleVoiceToggle}
+                  isListening={isListening}
+                  isBusy={appState === "processing"}
+                  compact
+                />
+              </div>
+            </div>
+
+            <div className="space-y-5">
+              <StepTransition show={appState === "navigation" || appState === "cost" || appState === "contact" || appState === "emergency"}>
+                <MapPanel hospitals={hospitals.length ? hospitals : [{ name: "Closest hospital", address: "San Francisco General Hospital, San Francisco, CA", lat: 37.7557, lng: -122.4044, phone: "(415) 206-8000" }]} />
+              </StepTransition>
+
+              <StepTransition show={appState === "cost" || appState === "contact"}>
+                <CostPanel hospitals={hospitals.length ? hospitals : [{ name: "Closest hospital", address: "San Francisco General Hospital, San Francisco, CA", lat: 37.7557, lng: -122.4044, phone: "(415) 206-8000" }]} riskLevel={riskLevel} />
+              </StepTransition>
+
+              <StepTransition show={appState === "contact"}>
+                <ProfilePanel onSend={() => setProfileSent(true)} sent={profileSent} />
+              </StepTransition>
+
+              {appState === "emergency" ? (
+                <div className="animate-fade-in rounded-[28px] border border-rose-400/[0.20] bg-rose-500/[0.10] p-5 text-sm text-rose-100">
+                  <div className="mb-2 flex items-center gap-2 font-medium">
+                    <ShieldAlert className="h-4 w-4" />
+                    Emergency mode
+                  </div>
+                  <p className="leading-7">
+                    This case is flagged as urgent. The experience stays in place, and emergency guidance is available
+                    without forcing a modal open.
+                  </p>
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                    <Button asChild variant="emergency" className="gap-2">
+                      <a href="tel:911">Call 911</a>
+                    </Button>
+                    <Button variant="secondary" onClick={() => setShowEmergencyOverlay(true)}>
+                      View emergency instructions
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );
