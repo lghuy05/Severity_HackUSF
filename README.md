@@ -1,4 +1,4 @@
-# Health Equity Bridge
+# Severity
 
 Demo-ready MVP for an AI multi-agent healthcare navigator with a Next.js frontend and FastAPI backend.
 
