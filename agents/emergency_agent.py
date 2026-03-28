@@ -1,3 +1,4 @@
+from agents.core.base_agent import create_agent
 from shared.schemas import EmergencyOutput
 
 
@@ -16,3 +17,15 @@ def emergency_response(risk_level: str) -> EmergencyOutput:
         emergency_flag=False,
         instructions=["No emergency escalation required based on current triage rules."],
     )
+
+
+emergency_agent = create_agent(
+    key="emergency",
+    name="emergency_agent",
+    instruction=(
+        "Provide urgent instructions for high-risk cases. "
+        "Keep the guidance immediate, direct, and safety-oriented."
+    ),
+    handler=lambda message, _context: emergency_response(str(message)),
+    metadata={"role": "emergency_escalation"},
+)

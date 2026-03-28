@@ -1,3 +1,4 @@
+from agents.core.base_agent import create_agent
 from shared.schemas import TriageOutput
 
 
@@ -41,3 +42,15 @@ def triage_symptoms(symptoms_text: str) -> TriageOutput:
         risk_level="low",
         explanation="Symptoms appear lower risk based on simple rules and should be monitored with routine follow-up.",
     )
+
+
+triage_agent = create_agent(
+    key="triage",
+    name="triage_agent",
+    instruction=(
+        "Classify risk as low, medium, or high. "
+        "Escalate for chest pain, trouble breathing, dizziness, fainting, stroke-like symptoms, or severe bleeding."
+    ),
+    handler=lambda message, _context: triage_symptoms(str(message)),
+    metadata={"role": "risk_classification"},
+)
