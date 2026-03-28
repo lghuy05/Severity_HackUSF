@@ -1,8 +1,12 @@
 """
-Live orchestrator -- uses real Gemini triage + Google Places.
+Live orchestrator -- uses real Gemini triage + Google Places + Pricing + Language.
 
-Replaces the mock normal-triage flow with actual API calls while keeping
-the same streaming interface, emergency bypass logic, and event schema.
+Full agent pipeline:
+  1. Emergency bypass (keyword detection)
+  2. Triage Agent (Gemini severity classification)
+  3. Maps Agent (Google Places hospital search)
+  4. Pricing Agent (Gemini cost estimation)
+  5. Language Agent (Gemini simplify + translate)
 """
 
 import asyncio
@@ -15,6 +19,7 @@ import httpx
 from backend.session_manager import get_emergency_context
 from agents.live_triage import run_triage
 from agents.live_maps import get_nearby_hospitals
+from agents.llm_agents import estimate_costs, simplify_and_translate
 
 # ---------------------------------------------------------------------------
 # Distress keywords that trigger the emergency bypass
@@ -55,6 +60,7 @@ async def stream_orchestrator(
     history: List[dict],
     latitude: Optional[float] = None,
     longitude: Optional[float] = None,
+    target_language: str = "en",
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields newline-delimited JSON strings.
@@ -123,6 +129,7 @@ async def stream_orchestrator(
             "map_trigger": False,
             "emergency_flag": True,
             "hospitals": [],
+            "estimated_costs": None,
         })
         return
 
@@ -138,7 +145,6 @@ async def stream_orchestrator(
         "message": "Analyzing symptoms with Gemini...",
     })
 
-    # Build a compact history string for the LLM
     history_str = "\n".join(
         f"[{m['role']}] {m['content']}" for m in history[-5:]
     ) if history else "(no prior messages)"
@@ -190,14 +196,49 @@ async def stream_orchestrator(
             "message": "Severity is manageable -- hospital search not needed.",
         })
 
-    # Step 3: Final response
+    # Step 3: Pricing Agent
+    yield json.dumps({
+        "type": "status",
+        "status": "processing",
+        "agent": "Pricing Agent",
+        "message": "Estimating treatment costs...",
+    })
+
+    cost_data = await estimate_costs(reason)
+
+    yield json.dumps({
+        "type": "status",
+        "status": "processing",
+        "agent": "Pricing Agent",
+        "message": f"Estimated range: {cost_data.get('estimated_cost_range', 'N/A')}",
+    })
+
+    # Step 4: Language Agent (simplify + translate)
+    yield json.dumps({
+        "type": "status",
+        "status": "processing",
+        "agent": "Language Agent",
+        "message": f"Translating and simplifying to {target_language}...",
+    })
+
+    translated_text = await simplify_and_translate(response_text, target_language)
+
+    yield json.dumps({
+        "type": "status",
+        "status": "processing",
+        "agent": "Language Agent",
+        "message": "Translation complete.",
+    })
+
+    # Step 5: Final response
     yield json.dumps({
         "type": "final",
         "severity": severity,
         "reason": reason,
-        "response": response_text,
+        "response": translated_text,
         "map_trigger": len(hospitals) > 0,
         "emergency_flag": severity == "CRITICAL",
         "emergency_dispatched": False,
         "hospitals": hospitals,
+        "estimated_costs": cost_data,
     })

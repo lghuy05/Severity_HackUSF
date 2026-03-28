@@ -60,11 +60,17 @@ async def get_nearby_hospitals(lat: float, lng: float) -> List[dict]:
         hospitals = []
         for place in results:
             loc = place.get("geometry", {}).get("location", {})
+            h_lat = loc.get("lat", 0.0)
+            h_lng = loc.get("lng", 0.0)
+            place_id = place.get("place_id", "unknown")
             hospitals.append({
                 "name": place.get("name", "Unknown"),
                 "address": place.get("vicinity", place.get("formatted_address", "Unknown")),
-                "lat": loc.get("lat", 0.0),
-                "lng": loc.get("lng", 0.0),
+                "lat": h_lat,
+                "lng": h_lng,
+                "place_id": place_id,
+                "directions_url": f"https://www.google.com/maps/dir/?api=1&destination={h_lat},{h_lng}",
+                "booking_url": f"https://mock-booking-portal.com/schedule?facility_id={place_id}",
             })
 
         return hospitals

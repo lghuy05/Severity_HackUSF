@@ -10,6 +10,7 @@ from typing import Dict, List
 
 
 _store: Dict[str, List[dict]] = {}
+_medical_store: Dict[str, str] = {}
 _lock = threading.Lock()
 
 
@@ -57,3 +58,16 @@ def get_emergency_context(session_id: str, limit: int = 5) -> str:
     return "\n".join(
         f"[{m['role']}] {m['content']}" for m in messages
     )
+
+
+def set_medical_history(session_id: str, text: str) -> None:
+    """Store extracted medical record text for a session."""
+    with _lock:
+        _medical_store[session_id] = text
+
+
+def get_medical_history(session_id: str) -> str:
+    """Return stored medical record text, or empty string."""
+    with _lock:
+        return _medical_store.get(session_id, "")
+
