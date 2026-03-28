@@ -1,3 +1,4 @@
+from agents.core.base_agent import create_agent
 from shared.schemas import HospitalLocation, NavigationOutput
 
 
@@ -37,3 +38,23 @@ def find_nearby_hospitals(risk_level: str, location: str) -> NavigationOutput:
         recommendation=recommendation,
         hospitals=MOCK_HOSPITALS,
     )
+
+
+def _navigation_handler(message, _context) -> NavigationOutput:
+    payload = message if isinstance(message, dict) else {}
+    return find_nearby_hospitals(
+        risk_level=str(payload.get("risk_level", "low")),
+        location=str(payload.get("location", "Unknown location")),
+    )
+
+
+navigation_agent = create_agent(
+    key="navigation",
+    name="navigation_agent",
+    instruction=(
+        "Suggest hospitals or care sites based on risk and location. "
+        "For high-risk cases, direct the user toward the nearest emergency department."
+    ),
+    handler=_navigation_handler,
+    metadata={"role": "care_navigation"},
+)

@@ -6,7 +6,7 @@ Demo-ready MVP for an AI multi-agent healthcare navigator with a Next.js fronten
 
 - `frontend/`: Next.js App Router UI with chat, voice input, map, and agent flow panel
 - `backend/`: FastAPI API and orchestrator
-- `agents/`: Modular agent logic
+- `agents/`: Google ADK-style multi-agent package with A2A routing
 - `shared/`: Shared schemas and TypeScript types
 - `docs/`: Architecture notes and demo script
 
@@ -21,6 +21,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
+
+Set `GEMINI_API_KEY=your_key` before starting the backend.
 
 ### Frontend
 
@@ -40,6 +42,6 @@ Optional:
 
 1. Enter or dictate a symptom like `I feel chest pain and dizzy`.
 2. Frontend sends `/analyze` request with text and location.
-3. Backend orchestrator runs language, triage, navigation, emergency, and summary agents.
+3. Backend orchestrator runs the ADK root agent, which routes A2A-style messages across language, triage, navigation, emergency, summary, and communication agents.
 4. UI updates the agent flow panel in real time.
 5. Emergency mode appears automatically for high-risk cases.
