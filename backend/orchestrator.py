@@ -1,5 +1,8 @@
 import asyncio
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
+
+import httpx
 
 from agents.communication_agent import format_provider_message
 from agents.emergency_agent import emergency_response
@@ -7,6 +10,7 @@ from agents.language_agent import process_language
 from agents.navigation_agent import find_nearby_hospitals
 from agents.summary_agent import build_summary
 from agents.triage_agent import triage_symptoms
+from backend.memory import get_emergency_context
 from shared.schemas import AnalyzeRequest, AnalyzeResponse, CommunicationResponse
 
 
@@ -17,6 +21,47 @@ async def stream_mock_orchestrator(
 ) -> AsyncGenerator[dict[str, Any], None]:
     # Simulate an async multi-agent workflow so the frontend can render live updates.
     _ = (session_id, user_message, history)
+
+    lowered = user_message.lower()
+    emergency_keywords = ("call 911", "help", "heart attack", "can't breathe", "cant breathe")
+    if any(keyword in lowered for keyword in emergency_keywords):
+        yield {
+            "status": "critical",
+            "agent": "Triage Agent",
+            "message": "Critical severity detected. Escalating to Emergency Agent.",
+        }
+
+        emergency_context = get_emergency_context(session_id=session_id, limit=5)
+
+        yield {
+            "status": "action",
+            "agent": "Emergency Agent",
+            "message": "Compiling emergency payload and contacting dispatch...",
+        }
+
+        dispatch_payload = {
+            "session_id": session_id,
+            "extracted_symptoms": emergency_context,
+            "urgency_level": "CRITICAL",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    "http://localhost:8000/api/emergency/dispatch",
+                    json=dispatch_payload,
+                )
+        except httpx.HTTPError:
+            pass
+
+        yield {
+            "type": "final",
+            "severity": "CRITICAL",
+            "response": "Emergency services have been notified.",
+            "emergency_dispatched": True,
+        }
+        return
 
     yield {
         "type": "status",
@@ -39,7 +84,6 @@ async def stream_mock_orchestrator(
     }
     await asyncio.sleep(0.9)
 
-    lowered = user_message.lower()
     if any(keyword in lowered for keyword in ("chest pain", "can't breathe", "cant breathe", "unconscious")):
         severity = "HIGH"
         response = "This may be an emergency. Call 911 now or go to the nearest ER immediately."

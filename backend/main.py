@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
-from threading import Lock
 from typing import Any
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi import WebSocket
@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from backend.orchestrator import run_analysis, run_communication, stream_mock_orchestrator
+from backend.memory import add_message, get_history
 from shared.schemas import AnalyzeRequest, AnalyzeResponse, CommunicationRequest, CommunicationResponse
 
 
@@ -23,37 +24,14 @@ class ChatRequest(BaseModel):
     message: str
 
 
-class InMemorySessionStore:
-    def __init__(self) -> None:
-        self._data: dict[str, list[dict[str, str]]] = {}
-        self._lock = Lock()
+class EmergencyPayload(BaseModel):
+    session_id: str
+    extracted_symptoms: str
+    urgency_level: str
+    timestamp: datetime
 
-    def add_message(self, session_id: str, role: str, content: str) -> None:
-        with self._lock:
-            self._data.setdefault(session_id, []).append({"role": role, "content": content})
-
-    def get_history(self, session_id: str) -> list[dict[str, str]]:
-        with self._lock:
-            return list(self._data.get(session_id, []))
-
-    def clear_session(self, session_id: str) -> None:
-        with self._lock:
-            self._data.pop(session_id, None)
-
-
-def add_message(session_id: str, role: str, content: str) -> None:
-    session_store.add_message(session_id, role, content)
-
-
-def get_history(session_id: str) -> list[dict[str, str]]:
-    return session_store.get_history(session_id)
-
-
-def clear_session(session_id: str) -> None:
-    session_store.clear_session(session_id)
 
 app = FastAPI(title="Health Equity Bridge API", version="0.1.0")
-session_store = InMemorySessionStore()
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,6 +57,18 @@ def communicate(request: CommunicationRequest):
     return run_communication(request.summary)
 
 
+@app.post("/api/emergency/dispatch")
+def emergency_dispatch(payload: EmergencyPayload):
+    print("\n" + "!" * 70)
+    print("!!! MOCK 911 DISPATCH RECEIVED !!!")
+    print(f"session_id: {payload.session_id}")
+    print(f"urgency_level: {payload.urgency_level}")
+    print(f"timestamp: {payload.timestamp.isoformat()}")
+    print(f"extracted_symptoms: {payload.extracted_symptoms}")
+    print("!" * 70 + "\n")
+    return {"status": "Dispatched successfully"}
+
+
 @app.websocket("/chat")
 async def chat_socket(websocket: WebSocket):
     await websocket.accept()
@@ -98,8 +88,17 @@ async def chat_socket(websocket: WebSocket):
                 )
                 continue
 
-            session_store.add_message(chat_request.session_id, "user", chat_request.message)
-            history = session_store.get_history(chat_request.session_id)
+            if not chat_request.session_id.strip():
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "session_id must not be empty",
+                    }
+                )
+                continue
+
+            add_message(chat_request.session_id, "user", chat_request.message)
+            history = get_history(chat_request.session_id)
 
             final_response_text = ""
             async for event in stream_mock_orchestrator(
@@ -112,7 +111,7 @@ async def chat_socket(websocket: WebSocket):
                     final_response_text = str(event.get("response", ""))
 
             if final_response_text:
-                session_store.add_message(chat_request.session_id, "assistant", final_response_text)
+                add_message(chat_request.session_id, "assistant", final_response_text)
 
     except WebSocketDisconnect:
         return
