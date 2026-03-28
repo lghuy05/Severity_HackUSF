@@ -41,3 +41,12 @@ def get_emergency_context(session_id: str, limit: int = 5) -> str:
         return "No recent conversation history."
 
     return " | ".join(f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent)
+
+
+def get_history_context(session_id: str, limit: int = 8) -> str:
+    history = session_store.get_history(session_id)
+    recent = history[-max(limit, 1) :]
+    if not recent:
+        return ""
+
+    return "\n".join(f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent)

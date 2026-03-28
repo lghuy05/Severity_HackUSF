@@ -1,8 +1,11 @@
-import asyncio
-from datetime import datetime, timezone
+import json
+import os
+import re
 from typing import Any, AsyncGenerator
 
+import google.generativeai as genai
 import httpx
+from dotenv import load_dotenv
 
 from agents.communication_agent import format_provider_message
 from agents.emergency_agent import emergency_response
@@ -10,98 +13,143 @@ from agents.language_agent import process_language
 from agents.navigation_agent import find_nearby_hospitals
 from agents.summary_agent import build_summary
 from agents.triage_agent import triage_symptoms
-from backend.memory import get_emergency_context
 from shared.schemas import AnalyzeRequest, AnalyzeResponse, CommunicationResponse
+
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+
+
+def _extract_json_block(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found in model response")
+
+    return json.loads(cleaned[start : end + 1])
+
+
+async def run_triage(user_message: str, history: str) -> dict[str, Any]:
+    if not GOOGLE_API_KEY:
+        return {
+            "severity": "MEDIUM",
+            "reason": "GOOGLE_API_KEY is missing; using fallback triage.",
+            "response_text": "I could not run full triage right now. If symptoms are severe, seek urgent care.",
+        }
+
+    prompt = (
+        "You are a medical triage assistant. "
+        "Classify the severity into: LOW, MEDIUM, HIGH, CRITICAL based on the user message and history. "
+        "You MUST return valid JSON exactly in this format: "
+        "{\"severity\":\"...\",\"reason\":\"...\",\"response_text\":\"A calm, brief response to the user\"}.\n\n"
+        f"Recent conversation history:\n{history or 'No prior history.'}\n\n"
+        f"Latest user message:\n{user_message}"
+    )
+
+    model = genai.GenerativeModel("gemini-2.5-flash")
+    response = await model.generate_content_async(prompt)
+    text = getattr(response, "text", "") or ""
+
+    try:
+        parsed = _extract_json_block(text)
+    except Exception:
+        parsed = {
+            "severity": "MEDIUM",
+            "reason": "Model response could not be parsed as JSON.",
+            "response_text": "I recommend getting checked by a healthcare professional soon.",
+        }
+
+    severity = str(parsed.get("severity", "MEDIUM")).upper()
+    if severity not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        severity = "MEDIUM"
+
+    return {
+        "severity": severity,
+        "reason": str(parsed.get("reason", "No reason provided.")),
+        "response_text": str(parsed.get("response_text", "Please seek medical care if symptoms worsen.")),
+    }
+
+
+async def get_nearby_hospitals(lat: float, lng: float) -> list[dict[str, Any]]:
+    if not GOOGLE_API_KEY:
+        return []
+
+    params = {
+        "location": f"{lat},{lng}",
+        "radius": 5000,
+        "type": "hospital",
+        "key": GOOGLE_API_KEY,
+    }
+    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPError:
+        return []
+
+    hospitals: list[dict[str, Any]] = []
+    for item in payload.get("results", [])[:3]:
+        geo = item.get("geometry", {}).get("location", {})
+        hospitals.append(
+            {
+                "name": item.get("name", "Unknown Hospital"),
+                "address": item.get("vicinity", item.get("formatted_address", "Address unavailable")),
+                "location": {
+                    "lat": geo.get("lat"),
+                    "lng": geo.get("lng"),
+                },
+            }
+        )
+
+    return hospitals
 
 
 async def stream_mock_orchestrator(
     session_id: str,
     user_message: str,
     history: list[dict[str, str]],
+    history_str: str,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    # Simulate an async multi-agent workflow so the frontend can render live updates.
-    _ = (session_id, user_message, history)
-
-    lowered = user_message.lower()
-    emergency_keywords = ("call 911", "help", "heart attack", "can't breathe", "cant breathe")
-    if any(keyword in lowered for keyword in emergency_keywords):
-        yield {
-            "status": "critical",
-            "agent": "Triage Agent",
-            "message": "Critical severity detected. Escalating to Emergency Agent.",
-        }
-
-        emergency_context = get_emergency_context(session_id=session_id, limit=5)
-
-        yield {
-            "status": "action",
-            "agent": "Emergency Agent",
-            "message": "Compiling emergency payload and contacting dispatch...",
-        }
-
-        dispatch_payload = {
-            "session_id": session_id,
-            "extracted_symptoms": emergency_context,
-            "urgency_level": "CRITICAL",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(
-                    "http://localhost:8000/api/emergency/dispatch",
-                    json=dispatch_payload,
-                )
-        except httpx.HTTPError:
-            pass
-
-        yield {
-            "type": "final",
-            "severity": "CRITICAL",
-            "response": "Emergency services have been notified.",
-            "emergency_dispatched": True,
-        }
-        return
+    _ = (session_id, history)
 
     yield {
-        "type": "status",
-        "agent": "system",
-        "message": "Agent received message",
+        "status": "processing",
+        "agent": "Triage Agent",
+        "message": "Analyzing symptoms...",
     }
-    await asyncio.sleep(0.8)
+
+    triage = await run_triage(user_message=user_message, history=history_str)
+    severity = triage.get("severity", "MEDIUM")
+    reason = triage.get("reason", "No reason provided.")
+    response_text = triage.get("response_text", "Please seek medical care if symptoms worsen.")
 
     yield {
-        "type": "status",
-        "agent": "triage",
-        "message": "Evaluating severity...",
+        "status": "processing",
+        "agent": "Maps Agent",
+        "message": "Checking location for nearby facilities...",
     }
-    await asyncio.sleep(0.9)
 
-    yield {
-        "type": "status",
-        "agent": "navigation",
-        "message": "Fetching nearby clinics...",
-    }
-    await asyncio.sleep(0.9)
-
-    if any(keyword in lowered for keyword in ("chest pain", "can't breathe", "cant breathe", "unconscious")):
-        severity = "HIGH"
-        response = "This may be an emergency. Call 911 now or go to the nearest ER immediately."
-        map_trigger = True
-    elif any(keyword in lowered for keyword in ("fever", "dizzy", "headache", "pain")):
-        severity = "MEDIUM"
-        response = "Please visit an urgent care clinic today for in-person evaluation."
-        map_trigger = True
-    else:
-        severity = "LOW"
-        response = "Monitor symptoms, rest, and follow up with primary care if symptoms worsen."
-        map_trigger = False
+    hospital_list: list[dict[str, Any]] = []
+    if severity in ["HIGH", "CRITICAL"] and latitude is not None and longitude is not None:
+        hospital_list = await get_nearby_hospitals(latitude, longitude)
 
     yield {
         "type": "final",
         "severity": severity,
-        "response": response,
-        "map_trigger": map_trigger,
+        "reason": reason,
+        "response": response_text,
+        "hospitals": hospital_list,
     }
 
 
