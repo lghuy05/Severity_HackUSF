@@ -9,17 +9,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#102033",
-        mist: "#eef5fb",
-        aqua: "#74d3c7",
-        coral: "#ff8a72",
-        alert: "#b3261e",
+        ink: "#0b0f14",
+        mist: "#111827",
+        aqua: "#38bdf8",
+        coral: "#6366f1",
+        alert: "#ef4444",
       },
       fontFamily: {
-        sans: ["ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       boxShadow: {
-        panel: "0 24px 60px rgba(16, 32, 51, 0.12)",
+        panel: "0 24px 80px rgba(2, 6, 23, 0.38)",
       },
     },
   },
