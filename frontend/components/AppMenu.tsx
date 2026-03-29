@@ -22,7 +22,7 @@ export function AppMenu() {
             <ActivitySquare className="h-4.5 w-4.5" />
           </span>
           <span>
-            <span className="block text-sm font-semibold tracking-[-0.02em]">Health Equity Bridge</span>
+            <span className="block text-sm font-semibold tracking-[-0.02em]">Severity</span>
             <span className="block text-xs text-slate-500">Guided care navigation</span>
           </span>
         </Link>

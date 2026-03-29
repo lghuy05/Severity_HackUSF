@@ -234,6 +234,34 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(turn.state.risk, "high")
         self.assertTrue(turn.session.emergency_flag)
 
+    def test_high_urgency_without_life_threatening_signals_does_not_trigger_911_overlay(self) -> None:
+        meanings = iter(
+            [
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=["broken arm"],
+                    severity="severe",
+                    urgency="high",
+                    user_goal="get_advice",
+                    has_enough_info=True,
+                    follow_up_needed=False,
+                    follow_up_question=None,
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=True,
+                ),
+            ]
+        )
+
+        with patch("backend.orchestrator.extract_structured_meaning", side_effect=lambda *args, **kwargs: next(meanings)):
+            turn = orchestrator.run_chat_turn(
+                ChatTurnRequest(intent="symptoms", message="I think I broke my arm", location="Tampa, Florida")
+            )
+
+        self.assertEqual(turn.state.risk, "high")
+        self.assertFalse(turn.session.emergency_flag)
+        self.assertNotIn("emergency", turn.response.ui_blocks)
+
     def test_headache_asks_severity_follow_up(self) -> None:
         meaning = SemanticMeaning(
             intent="symptom_check",
@@ -307,6 +335,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(second.state.severity, "moderate")
         self.assertIsNone(second.response.follow_up)
         self.assertEqual(second.session.follow_up_answers.get("semantic_follow_up"), "It's about 5/10")
+        self.assertNotIn("what symptom", second.assistant_message.lower())
 
     def test_follow_up_fallback_maps_numeric_scale_when_semantic_output_is_still_unknown(self) -> None:
         meanings = iter(
@@ -524,6 +553,258 @@ class OrchestratorTest(unittest.TestCase):
         message_chunks = [chunk for chunk in chunks if chunk.type == "message"]
         self.assertEqual(len(message_chunks), 1)
         self.assertEqual(message_chunks[0].message, chunks[-1].response.message)
+
+    def test_semantic_layer_receives_compact_recent_context_and_profile(self) -> None:
+        captured: list[dict] = []
+        meanings = iter(
+            [
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=["headache"],
+                    severity="moderate",
+                    urgency="medium",
+                    user_goal="get_advice",
+                    has_enough_info=True,
+                    follow_up_needed=False,
+                    follow_up_question=None,
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=True,
+                ),
+                SemanticMeaning(
+                    intent="guidance",
+                    symptoms=[],
+                    severity="moderate",
+                    urgency="medium",
+                    user_goal="get_advice",
+                    has_enough_info=True,
+                    follow_up_needed=False,
+                    follow_up_question=None,
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=False,
+                ),
+            ]
+        )
+
+        def semantic_with_capture(*args, **kwargs):
+            captured.append(kwargs)
+            return next(meanings)
+
+        with patch("backend.orchestrator.extract_structured_meaning", side_effect=semantic_with_capture):
+            first = orchestrator.run_chat_turn(
+                ChatTurnRequest(
+                    intent="symptoms",
+                    message="I have a headache",
+                    location="Tampa, Florida",
+                    profile={"language": "vi", "location": "Tampa, Florida", "age": 33},
+                )
+            )
+            orchestrator.run_chat_turn(
+                ChatTurnRequest(
+                    session_id=first.session_id,
+                    intent="symptoms",
+                    message="What should I do next?",
+                    location="Tampa, Florida",
+                )
+            )
+
+        self.assertEqual(len(captured), 2)
+        second_call = captured[1]
+        self.assertEqual(second_call["profile"]["language"], "vi")
+        self.assertEqual(second_call["profile"]["age"], 33)
+        self.assertLessEqual(len(second_call["recent_turns"]), 4)
+        self.assertTrue(any(turn["content"] == "I have a headache" for turn in second_call["recent_turns"]))
+        self.assertEqual(second_call["conversation_summary"], "")
+
+    def test_known_symptom_is_not_reasked_after_duration_follow_up(self) -> None:
+        meanings = iter(
+            [
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=["headache"],
+                    severity="unknown",
+                    urgency="low",
+                    user_goal="get_advice",
+                    has_enough_info=False,
+                    follow_up_needed=True,
+                    follow_up_question="How severe is your headache?",
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=True,
+                ),
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=[],
+                    severity="moderate",
+                    urgency="medium",
+                    user_goal="get_advice",
+                    has_enough_info=False,
+                    answered_pending_question=True,
+                    resolved_field="severity",
+                    resolved_value="moderate",
+                    follow_up_needed=True,
+                    follow_up_field="duration",
+                    follow_up_question="How long have you had this headache?",
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=False,
+                ),
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=[],
+                    severity="moderate",
+                    urgency="medium",
+                    user_goal="get_advice",
+                    has_enough_info=False,
+                    answered_pending_question=True,
+                    resolved_field="duration",
+                    resolved_value="last hour",
+                    follow_up_needed=True,
+                    follow_up_field="symptom",
+                    follow_up_question="What symptoms are you experiencing?",
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=False,
+                ),
+            ]
+        )
+
+        with patch("backend.orchestrator.extract_structured_meaning", side_effect=lambda *args, **kwargs: next(meanings)):
+            first = orchestrator.run_chat_turn(
+                ChatTurnRequest(intent="symptoms", message="I have a headache", location="Tampa, Florida")
+            )
+            second = orchestrator.run_chat_turn(
+                ChatTurnRequest(
+                    session_id=first.session_id,
+                    intent="symptoms",
+                    message="6/10",
+                    location="Tampa, Florida",
+                )
+            )
+            third = orchestrator.run_chat_turn(
+                ChatTurnRequest(
+                    session_id=first.session_id,
+                    intent="symptoms",
+                    message="last hour",
+                    location="Tampa, Florida",
+                )
+            )
+
+        self.assertIsNotNone(second.response.follow_up)
+        self.assertEqual(second.response.follow_up.text, "How long have you had this headache?")
+        self.assertEqual(third.state.symptom, "headache")
+        self.assertIsNone(third.response.follow_up)
+        self.assertNotIn("what symptoms are you experiencing", third.assistant_message.lower())
+
+    def test_known_symptom_is_not_reasked_in_vietnamese_after_severity_answer(self) -> None:
+        meanings = iter(
+            [
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=["stomach pain"],
+                    severity="unknown",
+                    urgency="low",
+                    user_goal="get_advice",
+                    has_enough_info=False,
+                    follow_up_needed=True,
+                    follow_up_question="Mức độ đau bụng của bạn như thế nào?",
+                    follow_up_kind="multiple_choice",
+                    follow_up_options=["Nhẹ", "Trung bình", "Nghiêm trọng"],
+                    is_new_case=True,
+                ),
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=[],
+                    severity="moderate",
+                    urgency="low",
+                    user_goal="get_advice",
+                    has_enough_info=False,
+                    answered_pending_question=True,
+                    resolved_field="severity",
+                    resolved_value="moderate",
+                    follow_up_needed=True,
+                    follow_up_field="symptom",
+                    follow_up_question="Bạn đang gặp phải những triệu chứng nào vậy?",
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=False,
+                ),
+            ]
+        )
+
+        with patch("backend.orchestrator.extract_structured_meaning", side_effect=lambda *args, **kwargs: next(meanings)):
+            first = orchestrator.run_chat_turn(
+                ChatTurnRequest(intent="symptoms", message="Tôi bị đau bụng", location="Tampa, Florida", preferred_language="vi")
+            )
+            second = orchestrator.run_chat_turn(
+                ChatTurnRequest(
+                    session_id=first.session_id,
+                    intent="symptoms",
+                    message="mức độ trung bình",
+                    location="Tampa, Florida",
+                    preferred_language="vi",
+                )
+            )
+
+        self.assertEqual(second.state.symptom, "stomach pain")
+        self.assertIsNone(second.response.follow_up)
+        self.assertNotIn("triệu chứng", second.assistant_message.lower())
+
+    def test_manual_severity_answer_preserves_existing_symptom_without_redundant_follow_up(self) -> None:
+        meanings = iter(
+            [
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=["stomach pain"],
+                    severity="unknown",
+                    urgency="low",
+                    user_goal="get_advice",
+                    has_enough_info=False,
+                    follow_up_needed=True,
+                    follow_up_field="severity",
+                    follow_up_question="How severe is the stomach pain?",
+                    follow_up_kind="multiple_choice",
+                    follow_up_options=["Mild", "Moderate", "Severe"],
+                    is_new_case=True,
+                ),
+                SemanticMeaning(
+                    intent="symptom_check",
+                    symptoms=[],
+                    severity="moderate",
+                    urgency="medium",
+                    user_goal="get_advice",
+                    has_enough_info=True,
+                    answered_pending_question=True,
+                    resolved_field="severity",
+                    resolved_value="moderate",
+                    follow_up_needed=True,
+                    follow_up_field="symptom",
+                    follow_up_question="What symptom are you experiencing?",
+                    follow_up_kind="free_text",
+                    follow_up_options=[],
+                    is_new_case=False,
+                ),
+            ]
+        )
+
+        with patch("backend.orchestrator.extract_structured_meaning", side_effect=lambda *args, **kwargs: next(meanings)):
+            first = orchestrator.run_chat_turn(
+                ChatTurnRequest(intent="symptoms", message="I feel stomach pain", location="Tampa, Florida")
+            )
+            second = orchestrator.run_chat_turn(
+                ChatTurnRequest(
+                    session_id=first.session_id,
+                    intent="symptoms",
+                    message="moderate",
+                    location="Tampa, Florida",
+                )
+            )
+
+        self.assertEqual(second.state.symptom, "stomach pain")
+        self.assertEqual(second.state.severity, "moderate")
+        self.assertIsNone(second.response.follow_up)
+        self.assertNotIn("what symptom", second.assistant_message.lower())
 
     @unittest.skipUnless(find_spec("httpx") is not None, "httpx is required for FastAPI TestClient")
     def test_analyze_endpoint_returns_structured_trace(self) -> None:

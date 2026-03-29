@@ -9,7 +9,7 @@ const manrope = Manrope({ subsets: ["latin"], variable: "--font-sans" });
 const newsreader = Newsreader({ subsets: ["latin"], variable: "--font-display" });
 
 export const metadata: Metadata = {
-  title: "Health Equity Bridge",
+  title: "Severity",
   description: "Clear guidance from symptoms to next steps",
 };
 

@@ -53,23 +53,26 @@ def create_test_message() -> AgentMessage:
 
     message = AgentMessage(
         request_id="test-call-001",
-        user_id="patient-123",
+        user_id="tomas-torrado",
         location="Tampa, Florida",
-        raw_text="I have chest pain and need an appointment",
+        raw_text="My stomach is hurting and I need an appointment",
         preferred_language="en",
-        normalized_text="I have chest pain and need an appointment",
+        normalized_text="My stomach is hurting and I need an appointment",
         detected_language="en",
-        translated_text="I have chest pain and need an appointment",
-        risk_level="high",
-        risk_reason="Chest pain is a high-risk symptom",
+        translated_text="My stomach is hurting and I need an appointment",
+        risk_level="medium",
+        risk_reason="Stomach pain needs medical evaluation",
         hospitals=[hospital],
         metadata={
-            "patient_name": "John Smith",
-            "preferred_date": "Next Monday",
-            "preferred_time": "2:00 PM",
-            "reason_for_visit": "Chest pain evaluation",
+            "patient_name": "Tomas Torrado",
+            "reason_for_visit": "Stomach pain evaluation",
             "hospital_name": "Mercy General Hospital",
-            "max_wait_seconds": 60,
+            "time_slots": [
+                {"date": "Monday April 7th", "time": "10:00 AM"},
+                {"date": "Monday April 7th", "time": "2:00 PM"},
+                {"date": "Tuesday April 8th", "time": "9:00 AM"},
+            ],
+            "max_wait_seconds": 180,
             "poll_interval": 5,
         },
     )
@@ -102,7 +105,10 @@ def test_call_scheduling_agent() -> None:
     message = create_test_message()
     print(f"  Patient: {message.metadata.get('patient_name')}")
     print(f"  Hospital: {message.metadata.get('hospital_name')}")
-    print(f"  Risk Level: {message.risk_level}")
+    print(f"  Reason: {message.metadata.get('reason_for_visit')}")
+    print(f"  Available slots:")
+    for i, slot in enumerate(message.metadata.get('time_slots', []), 1):
+        print(f"    {i}. {slot.get('time')} on {slot.get('date')}")
 
     print("\n✓ Initializing CallSchedulingAgent...")
     agent = CallSchedulingAgent()
@@ -130,12 +136,17 @@ def test_call_scheduling_agent() -> None:
 
         if "appointment_result" in result_message.metadata:
             result = result_message.metadata["appointment_result"]
-            print(f"\nStatus: {result.get('status')}")
+            print(f"\nOverall Status: {result.get('status')}")
             print(f"Call ID: {result.get('call_id')}")
+            
+            if result.get("slots_tried"):
+                print(f"\nTime Slots Tried:")
+                for i, slot in enumerate(result["slots_tried"], 1):
+                    print(f"  {i}. {slot.get('time')} on {slot.get('date')}")
 
-            if "appointment" in result:
+            if "appointment" in result and result["appointment"]:
                 appt = result["appointment"]
-                print(f"\nAppointment Details:")
+                print(f"\n✅ APPOINTMENT DETAILS:")
                 print(f"  Patient: {appt.get('patient_name')}")
                 print(f"  Hospital: {appt.get('hospital')}")
                 print(f"  Date: {appt.get('date')}")
@@ -143,13 +154,16 @@ def test_call_scheduling_agent() -> None:
                 print(f"  Doctor: {appt.get('doctor')}")
                 print(f"  Location: {appt.get('location')}")
                 print(f"  Instructions: {appt.get('instructions')}")
+                print(f"  Confirmed: {appt.get('confirmed')}")
+                if appt.get('slot_index') is not None:
+                    print(f"  Booked Slot: #{appt.get('slot_index') + 1}")
 
             if result.get("transcript"):
-                print(f"\nTranscript:")
-                print(f"  {result['transcript'][:300]}...")
+                print(f"\nTranscript Snippet:")
+                print(f"  {result['transcript'][:400]}...")
 
             if result.get("error"):
-                print(f"\nError: {result['error']}")
+                print(f"\n❌ Error: {result['error']}")
 
         print("\n" + "=" * 70)
         print("✓ Test completed!")

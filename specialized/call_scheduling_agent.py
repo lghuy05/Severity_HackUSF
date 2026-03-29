@@ -22,21 +22,139 @@ VAPI_TO_NUMBER = os.environ.get("VAPI_TO_NUMBER", "")
 VAPI_BASE_URL = "https://api.vapi.ai"
 
 
+def _build_dynamic_system_prompt(patient_name: str, reason_for_visit: str, hospital_name: str, time_slots: list) -> str:
+    """
+    Build a dynamic system prompt for the Vapi assistant based on the time slots.
+    Instructs the assistant to offer slots one by one and stop when one is confirmed.
+    """
+    slots_text = ""
+    for i, slot in enumerate(time_slots, 1):
+        slot_date = slot.get("date", "")
+        slot_time = slot.get("time", "")
+        slot_str = f"{slot_time} on {slot_date}" if slot_date else slot_time
+        
+        if i == 1:
+            slots_text += f"1. First choice: {slot_str}\n"
+        elif i == 2:
+            slots_text += f"2. Second choice: {slot_str}\n"
+        elif i == 3:
+            slots_text += f"3. Third choice: {slot_str}\n"
+    
+    num_slots = len(time_slots)
+    
+    if num_slots == 1:
+        single_slot = time_slots[0]
+        slot_date = single_slot.get("date", "")
+        slot_time = single_slot.get("time", "")
+        slot_str = f"{slot_time} on {slot_date}" if slot_date else slot_time
+        
+        prompt = f"""You are a professional healthcare assistant calling to schedule a medical appointment.
+
+**Patient Information:**
+- Patient Name: {patient_name}
+- Reason for Visit: {reason_for_visit}
+- Hospital: {hospital_name}
+
+**APPOINTMENT TIME:**
+{slot_str}
+
+**Your task:**
+1. Greet the receptionist professionally and introduce yourself
+2. Explain you're calling on behalf of {patient_name} to schedule an appointment for: {reason_for_visit}
+3. Propose the time slot: {slot_str}
+4. If they confirm, say clearly: "Perfect! The appointment is confirmed for {slot_str}."
+5. Try to gather additional information (but don't force it):
+   - Which doctor will see {patient_name}?
+   - What department or location should they check in at?
+   - Any special instructions (arrive early, bring insurance card, fasting, etc.)?
+6. End the call professionally
+
+**Key instructions:**
+- Be courteous and professional
+- Speak clearly and concisely
+- If they reject this time, say: "Thank you for your time. We will try again later. Have a great day." and end the call
+- Always include the word "confirmed" when the appointment is booked"""
+    else:
+        prompt = f"""You are a professional healthcare assistant calling to schedule a medical appointment.
+
+**Patient Information:**
+- Patient Name: {patient_name}
+- Reason for Visit: {reason_for_visit}
+- Hospital: {hospital_name}
+
+**AVAILABLE TIME SLOTS (in order of preference):**
+{slots_text}
+**Your task:**
+1. Greet the receptionist professionally and introduce yourself
+2. Explain you're calling on behalf of {patient_name} to schedule an appointment for: {reason_for_visit}
+
+3. Offer time slots in order:
+   - Start with your FIRST choice
+   - If rejected, immediately offer your SECOND choice (do not repeat the first one)
+   - If rejected, immediately offer your THIRD choice (do not repeat previous ones)
+   - Do NOT offer multiple slots at the same time - offer one, wait for their response, then offer the next
+
+4. When the receptionist accepts ANY slot:
+   - Confirm the details back: "So we have {patient_name} scheduled for [the accepted slot], is that correct?"
+   - Once they confirm, say clearly: "Perfect! The appointment is confirmed for [slot]."
+   - Try to gather additional information (but don't force it):
+     - Which doctor will see {patient_name}?
+     - What department or location should they check in at?
+     - Any special instructions (arrive early, bring insurance card, fasting, etc.)?
+   - End the call professionally
+
+5. If ALL slots are rejected:
+   - Say: "I understand, thank you so much for your time. We will try again later. Have a great day." and end the call
+   - Do NOT try to reschedule on your own
+
+**Key instructions:**
+- Be natural, professional, and conversational
+- Never repeat a slot that was already rejected
+- Only offer one slot at a time - wait for their response before offering the next
+- As soon as any slot is accepted/confirmed, stop offering more slots
+- Always include the word "confirmed" when the appointment is booked
+- If all slots are rejected, end gracefully without further negotiation"""
+    
+    return prompt
+
+
 def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
     """
     STEP 1: Make an outbound phone call via Vapi to schedule an appointment.
     
-    Extracts patient details from message and calls Vapi /call/phone endpoint.
+    Handles up to 3 time slots in a single call. If the first is rejected,
+    the assistant automatically offers the second, then the third.
+    
+    Extracts patient details and time slots from message metadata.
     Returns: { "call_id": "...", "status": "...", "message": "..." }
     """
     patient_name = str(message.metadata.get("patient_name", "Unknown Patient")).strip()
-    preferred_date = str(message.metadata.get("preferred_date", "")).strip()
-    preferred_time = str(message.metadata.get("preferred_time", "")).strip()
     reason_for_visit = str(message.metadata.get("reason_for_visit", "Medical consultation")).strip()
     hospital_name = (
         str(message.metadata.get("hospital_name", ""))
         or (message.hospitals[0].name if message.hospitals else "Healthcare Facility")
     ).strip()
+    
+    # Get time slots - can be a list of dicts or fall back to single preferred date/time
+    time_slots = message.metadata.get("time_slots")
+    
+    # Fallback: if no time_slots list, create one from preferred_date and preferred_time
+    if not time_slots:
+        preferred_date = str(message.metadata.get("preferred_date", "")).strip()
+        preferred_time = str(message.metadata.get("preferred_time", "")).strip()
+        if preferred_date or preferred_time:
+            time_slots = [{"date": preferred_date, "time": preferred_time}]
+    
+    if not time_slots:
+        logger.error("No time slots provided")
+        return {"call_id": "", "status": "error", "message": "No time slots provided"}
+    
+    # Ensure we have at most 3 slots
+    time_slots = time_slots[:3]
+    logger.info(f"Scheduling with {len(time_slots)} time slot(s): {time_slots}")
+    
+    # Build dynamic system prompt with the time slots
+    system_prompt = _build_dynamic_system_prompt(patient_name, reason_for_visit, hospital_name, time_slots)
 
     payload = {
         "assistantId": VAPI_ASSISTANT_ID,
@@ -45,12 +163,11 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
             "number": VAPI_TO_NUMBER,
         },
         "assistantOverrides": {
+            "instructions": system_prompt,
             "variableValues": {
                 "patient": {
                     "fullName": patient_name,
                 },
-                "preferred_date": preferred_date,
-                "preferred_time": preferred_time,
                 "reason_for_visit": reason_for_visit,
                 "hospital_name": hospital_name,
             }
@@ -62,9 +179,9 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
         "Content-Type": "application/json",
     }
 
-    # DEBUG: Log what we're about to send
     logger.debug(f"Vapi request - API key present: {bool(VAPI_API_KEY)}, API key length: {len(VAPI_API_KEY)}")
     logger.debug(f"Vapi request - Assistant ID: {VAPI_ASSISTANT_ID}, Phone Number ID: {VAPI_PHONE_NUMBER_ID}")
+    logger.debug(f"Dynamic system prompt: {system_prompt[:200]}...")
 
     try:
         response = requests.post(f"{VAPI_BASE_URL}/call/phone", json=payload, headers=headers, timeout=30)
@@ -72,11 +189,10 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
         if response.status_code in (200, 201):
             data = response.json()
             call_id = data.get("id", "")
-            logger.info(f"Vapi call initiated: call_id={call_id}")
-            return {"call_id": call_id, "status": "initiated", "message": "Call queued with Vapi"}
+            logger.info(f"Vapi call initiated with {len(time_slots)} time slot(s): call_id={call_id}")
+            return {"call_id": call_id, "status": "initiated", "message": "Call queued with Vapi", "num_slots": len(time_slots)}
         else:
             logger.error(f"Vapi error {response.status_code}: {response.text}")
-            # Check if it's an auth error
             if response.status_code == 401:
                 logger.error(f"Authentication failed. Verify your VAPI_API_KEY is correct.")
                 logger.error(f"API Key used (first 20 chars): {VAPI_API_KEY[:20] if VAPI_API_KEY else 'NOT SET'}")
@@ -87,16 +203,15 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
         return {"call_id": "", "status": "error", "message": f"Exception: {str(e)}"}
 
 
-def get_call_status(message: AgentMessage) -> dict[str, Any]:
+def get_call_status(call_id: str) -> dict[str, Any]:
     """
     Get the current status of a Vapi call.
     Returns: { "call_id": "...", "status": "...", "ended_reason": "..." }
     """
-    call_id = str(message.metadata.get("call_id", "")).strip()
     if not call_id:
         return {"call_id": "", "status": "error", "ended_reason": "No call_id provided"}
 
-    headers = {"Authorization": f"Bearer {VAPI_API_KEY}"}
+    headers = {"Authorization": VAPI_API_KEY}
 
     try:
         response = requests.get(f"{VAPI_BASE_URL}/call/{call_id}", headers=headers, timeout=10)
@@ -117,12 +232,11 @@ def get_call_status(message: AgentMessage) -> dict[str, Any]:
         return {"call_id": call_id, "status": "error", "ended_reason": str(e)}
 
 
-def get_call_transcript(message: AgentMessage) -> dict[str, Any]:
+def get_call_transcript(call_id: str) -> dict[str, Any]:
     """
     Retrieve the transcript and recording of a completed Vapi call.
     Returns: { "call_id": "...", "transcript": "...", "recording_url": "...", "duration_seconds": ... }
     """
-    call_id = str(message.metadata.get("call_id", "")).strip()
     if not call_id:
         return {
             "call_id": "",
@@ -131,7 +245,7 @@ def get_call_transcript(message: AgentMessage) -> dict[str, Any]:
             "duration_seconds": 0,
         }
 
-    headers = {"Authorization": f"Bearer {VAPI_API_KEY}"}
+    headers = {"Authorization": VAPI_API_KEY}
 
     try:
         response = requests.get(f"{VAPI_BASE_URL}/call/{call_id}", headers=headers, timeout=10)
@@ -148,7 +262,6 @@ def get_call_transcript(message: AgentMessage) -> dict[str, Any]:
 
             transcript = "\n".join(transcript_lines)
             recording_url = data.get("recordingUrl", "")
-            duration = data.get("endedReason", "")
 
             return {
                 "call_id": call_id,
@@ -175,15 +288,11 @@ def get_call_transcript(message: AgentMessage) -> dict[str, Any]:
         }
 
 
-def wait_for_call_completion(message: AgentMessage) -> dict[str, Any]:
+def wait_for_call_completion(call_id: str, max_wait_seconds: int = 120, poll_interval: int = 5) -> dict[str, Any]:
     """
     STEP 2: Poll Vapi until call status is "ended" or timeout is reached.
     Returns: { "call_id": "...", "status": "...", "ended_reason": "..." }
     """
-    call_id = str(message.metadata.get("call_id", "")).strip()
-    max_wait_seconds = int(message.metadata.get("max_wait_seconds", 300))
-    poll_interval = int(message.metadata.get("poll_interval", 5))
-
     if not call_id:
         return {"call_id": "", "status": "error", "ended_reason": "No call_id provided"}
 
@@ -194,7 +303,7 @@ def wait_for_call_completion(message: AgentMessage) -> dict[str, Any]:
             logger.warning(f"Call {call_id} timeout after {elapsed:.1f}s")
             return {"call_id": call_id, "status": "timeout", "ended_reason": "Max wait time exceeded"}
 
-        status_result = get_call_status(message)
+        status_result = get_call_status(call_id)
         current_status = status_result.get("status", "")
 
         if current_status == "ended":
@@ -210,22 +319,52 @@ def wait_for_call_completion(message: AgentMessage) -> dict[str, Any]:
 
 def schedule_appointment_with_vapi(message: AgentMessage) -> dict[str, Any]:
     """
-    Main orchestration function: Execute the 5-step appointment scheduling workflow.
+    Main orchestration function: Make ONE phone call with up to 3 time slots.
     
-    STEP 1: Call make_appointment_call
-    STEP 2: Wait for call completion
-    STEP 3: Get transcript
-    STEP 4: Extract appointment details from transcript
-    STEP 5: Return structured JSON
+    The Vapi assistant will:
+    1. Offer the first time slot
+    2. If rejected, offer the second slot
+    3. If rejected, offer the third slot
+    4. If any is confirmed, extract details and return
+    5. If all rejected, return "failed" status
     """
     patient_name = str(message.metadata.get("patient_name", "Unknown Patient")).strip()
     hospital_name = (
         str(message.metadata.get("hospital_name", ""))
         or (message.hospitals[0].name if message.hospitals else "Healthcare Facility")
     ).strip()
+    reason_for_visit = str(message.metadata.get("reason_for_visit", "Medical consultation")).strip()
+    
+    # Get the time slots
+    time_slots = message.metadata.get("time_slots")
+    
+    # Fallback: if no time_slots list, create one from preferred_date and preferred_time
+    if not time_slots:
+        preferred_date = str(message.metadata.get("preferred_date", "")).strip()
+        preferred_time = str(message.metadata.get("preferred_time", "")).strip()
+        if preferred_date or preferred_time:
+            time_slots = [{"date": preferred_date, "time": preferred_time}]
+    
+    if not time_slots:
+        logger.error("No time slots provided")
+        return {
+            "status": "failed",
+            "call_id": "",
+            "appointment": None,
+            "slots_tried": [],
+            "transcript": "",
+            "recording_url": "",
+            "error": "No time slots provided",
+        }
 
-    # STEP 1: Make the call
-    logger.info(f"STEP 1: Initiating appointment call for {patient_name} at {hospital_name}")
+    max_wait_seconds = int(message.metadata.get("max_wait_seconds", 180))
+    poll_interval = int(message.metadata.get("poll_interval", 5))
+
+    logger.info(f"Starting appointment scheduling for {patient_name}")
+    logger.info(f"Available time slots: {time_slots}")
+
+    # STEP 1: Make the single call with all time slots
+    logger.info(f"STEP 1: Making single call with {len(time_slots)} time slot(s)")
     call_result = make_appointment_call(message)
 
     if call_result["status"] == "error":
@@ -233,69 +372,61 @@ def schedule_appointment_with_vapi(message: AgentMessage) -> dict[str, Any]:
         return {
             "status": "failed",
             "call_id": "",
-            "appointment": {
-                "patient_name": patient_name,
-                "hospital": hospital_name,
-                "date": None,
-                "time": None,
-                "doctor": None,
-                "location": None,
-                "instructions": None,
-            },
+            "appointment": None,
+            "slots_tried": time_slots,
             "transcript": "",
             "recording_url": "",
             "error": call_result["message"],
         }
 
     call_id = call_result.get("call_id", "")
-    message.metadata["call_id"] = call_id
     logger.info(f"STEP 1 complete: call_id={call_id}")
 
     # STEP 2: Wait for call to complete
-    logger.info(f"STEP 2: Waiting for call {call_id} to complete (max 300s)")
-    wait_result = wait_for_call_completion(message)
+    logger.info(f"STEP 2: Waiting for call {call_id} to complete (max {max_wait_seconds}s)")
+    wait_result = wait_for_call_completion(call_id, max_wait_seconds, poll_interval)
 
     if wait_result["status"] in ["error", "timeout"]:
-        logger.error(f"STEP 2 failed: {wait_result['ended_reason']}")
+        logger.warning(f"STEP 2 failed: {wait_result['ended_reason']}")
         return {
-            "status": "pending",
+            "status": "failed",
             "call_id": call_id,
-            "appointment": {
-                "patient_name": patient_name,
-                "hospital": hospital_name,
-                "date": None,
-                "time": None,
-                "doctor": None,
-                "location": None,
-                "instructions": None,
-            },
+            "appointment": None,
+            "slots_tried": time_slots,
             "transcript": "",
             "recording_url": "",
             "error": f"Call did not complete: {wait_result['ended_reason']}",
         }
 
-    logger.info(f"STEP 2 complete: call ended with reason: {wait_result['ended_reason']}")
+    logger.info(f"STEP 2 complete: call ended")
 
     # STEP 3: Get transcript
     logger.info(f"STEP 3: Retrieving transcript for call {call_id}")
-    transcript_result = get_call_transcript(message)
+    transcript_result = get_call_transcript(call_id)
     transcript = transcript_result.get("transcript", "")
     recording_url = transcript_result.get("recording_url", "")
     logger.info(f"STEP 3 complete: transcript length={len(transcript)}")
 
-    # STEP 4: Extract appointment details from transcript
+    # STEP 4: Extract appointment details
     logger.info(f"STEP 4: Extracting appointment details from transcript")
-    appointment_details = _extract_appointment_details(transcript, patient_name, hospital_name)
-    logger.info(f"STEP 4 complete: extracted details={appointment_details}")
+    appointment_details = _extract_appointment_details(transcript, patient_name, hospital_name, time_slots)
+    logger.info(f"STEP 4 complete: confirmed={appointment_details['confirmed']}, slot_index={appointment_details['slot_index']}")
 
     # STEP 5: Build final response
     logger.info(f"STEP 5: Building final response")
-    final_status = "confirmed" if appointment_details["date"] and appointment_details["time"] else "pending"
+    
+    if appointment_details["confirmed"] and appointment_details["slot_index"] is not None:
+        final_status = "confirmed"
+        logger.info(f"🎉 APPOINTMENT CONFIRMED for slot {appointment_details['slot_index']}")
+    else:
+        final_status = "failed"
+        logger.info(f"No time slots were confirmed")
 
     result = {
         "status": final_status,
         "call_id": call_id,
         "appointment": appointment_details,
+        "slots_tried": time_slots,
         "transcript": transcript,
         "recording_url": recording_url,
     }
@@ -304,9 +435,10 @@ def schedule_appointment_with_vapi(message: AgentMessage) -> dict[str, Any]:
     return result
 
 
-def _extract_appointment_details(transcript: str, patient_name: str, hospital_name: str) -> dict[str, Any]:
+def _extract_appointment_details(transcript: str, patient_name: str, hospital_name: str, time_slots: list) -> dict[str, Any]:
     """
-    STEP 4: Parse transcript to extract confirmed date, time, doctor, location, instructions.
+    STEP 4: Parse transcript to extract confirmation status and appointment details.
+    Determines which slot (0, 1, or 2) was confirmed, if any.
     Never fabricate details. Use None for missing fields.
     """
     details = {
@@ -317,6 +449,8 @@ def _extract_appointment_details(transcript: str, patient_name: str, hospital_na
         "doctor": None,
         "location": None,
         "instructions": None,
+        "slot_index": None,
+        "confirmed": False,
     }
 
     if not transcript:
@@ -324,8 +458,58 @@ def _extract_appointment_details(transcript: str, patient_name: str, hospital_na
 
     transcript_lower = transcript.lower()
 
-    # Simple heuristic extraction (can be enhanced with LLM if needed)
-    # Look for date patterns like "Monday", "tomorrow", "next Tuesday", or date formats
+    # Check if appointment was confirmed
+    # Look for EXPLICIT confirmation phrases that the Vapi assistant says
+    confirmation_phrases = [
+        "the appointment is confirmed",
+        "appointment is confirmed",
+        "we have you scheduled",
+        "your appointment is confirmed",
+        "you're scheduled for",
+        "you're all set",
+    ]
+    
+    is_confirmed = False
+    for phrase in confirmation_phrases:
+        if phrase in transcript_lower:
+            is_confirmed = True
+            logger.debug(f"Confirmation detected: found '{phrase}' in transcript")
+            break
+    
+    # Also reject if we hear explicit rejection phrases
+    rejection_phrases = [
+        "not available",
+        "unavailable",
+        "can't schedule",
+        "no availability",
+        "unable to book",
+        "unfortunately",
+    ]
+    
+    if not is_confirmed:
+        for phrase in rejection_phrases:
+            if phrase in transcript_lower:
+                logger.debug(f"Rejection detected: found '{phrase}' in transcript")
+                break
+
+    details["confirmed"] = is_confirmed
+    
+    # Determine which slot was confirmed by checking which slot details appear in transcript
+    if is_confirmed and time_slots:
+        for slot_idx, slot in enumerate(time_slots):
+            slot_date = str(slot.get("date", "")).lower()
+            slot_time = str(slot.get("time", "")).lower()
+            
+            # Check if this slot's date/time appears in the transcript
+            date_match = slot_date and slot_date in transcript_lower
+            time_match = slot_time and slot_time in transcript_lower
+            
+            if date_match or time_match:
+                details["slot_index"] = slot_idx
+                logger.info(f"Slot {slot_idx} (date={slot_date}, time={slot_time}) was confirmed")
+                break
+
+    # Look for date patterns
     date_keywords = [
         "monday",
         "tuesday",
@@ -380,34 +564,42 @@ class CallSchedulingAgent(BaseADKAgent):
     """
     Google ADK agent that schedules medical appointments via Vapi phone calls.
     
-    Follows the 5-step workflow:
-    1. Make outbound call to hospital
-    2. Wait for call completion
-    3. Retrieve transcript
-    4. Extract appointment details
-    5. Return structured appointment confirmation
+    Tries up to 3 available time slots provided by the frontend.
+    Stops on first confirmation or returns no_availability if all slots are exhausted.
+    
+    Follows the multi-slot workflow:
+    1. Get available time slots from message metadata
+    2. For each time slot: Make outbound call to hospital
+    3. Wait for call completion
+    4. Retrieve transcript
+    5. Extract appointment details and check for confirmation
+    6. If confirmed → Return immediately (STOP trying other slots)
+    7. If not confirmed → Try next slot
+    8. If all slots exhausted → Return no_availability status
     """
 
     def __init__(self) -> None:
         super().__init__(
             key="call_scheduling_agent",
             instruction=(
-                "You are a healthcare appointment scheduling assistant. When given patient details, "
-                "you will orchestrate an outbound phone call via Vapi to schedule a medical appointment. "
+                "You are a healthcare appointment scheduling assistant. When given patient details and available time slots, "
+                "you will orchestrate outbound phone calls via Vapi to schedule a medical appointment. "
                 "Follow these steps exactly: "
-                "STEP 1 - Call make_appointment_call with patient details. If status is error, stop and report. "
-                "STEP 2 - Call wait_for_call_completion with the call_id. Block until call ends. "
-                "STEP 3 - Call get_call_transcript with the call_id. "
-                "STEP 4 - Read the transcript and extract: confirmed date/time, doctor name, location/department, "
-                "special instructions. Never fabricate details. Use null for missing fields. "
-                "STEP 5 - Return the final JSON with status, call_id, appointment details, transcript, and recording_url."
+                "STEP 1 - For each available time slot provided by the frontend: "
+                "  a) Call make_appointment_call with the patient details and time slot. If status is error, try next slot. "
+                "  b) Call wait_for_call_completion with the call_id. Block until call ends. "
+                "  c) Call get_call_transcript with the call_id. "
+                "  d) Read the transcript and extract: confirmation status, date/time, doctor name, location/department. "
+                "  e) If confirmed, STOP and return the result. If NOT confirmed, try the next time slot. "
+                "STEP 2 - If all time slots are exhausted with no confirmation, return status: no_availability. "
+                "STEP 3 - Return the final JSON with status, all call_ids, attempted_slots, and confirmed_appointment (if any)."
             ),
             tools={"schedule_appointment_tool": schedule_appointment_with_vapi},
         )
 
     def process(self, message: AgentMessage, envelope: A2AEnvelope) -> AgentMessage:
         """
-        Process appointment scheduling request.
+        Process appointment scheduling request with multiple time slots.
         Stores result in message.metadata under 'appointment_result'.
         """
         try:

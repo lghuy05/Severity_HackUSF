@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Globe2, Mic, ShieldAlert } from "lucide-react";
+import { Globe2, MessageSquarePlus, Mic, ShieldAlert } from "lucide-react";
 
 import { ChatView } from "@/components/ChatView";
 import { ConversationCareOptions } from "@/components/ConversationCareOptions";
@@ -12,8 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { streamChatTurn } from "@/lib/api";
 import { getUiCopy, speechLocaleFor, type UiLanguage } from "@/lib/i18n";
-import { saveLatestAnalysis, saveLatestContext } from "@/lib/latest-analysis";
-import { DEFAULT_PROFILE, loadChatState, loadUserProfile, saveChatState, saveUserProfile } from "@/lib/session-store";
+import { clearLatestAnalysis, clearLatestContext, saveLatestAnalysis, saveLatestContext } from "@/lib/latest-analysis";
+import { clearChatState, DEFAULT_PROFILE, loadChatState, loadUserProfile, saveChatState, saveUserProfile } from "@/lib/session-store";
 import type { AnalyzeResponse, AssistantTurnPayload, ChatIntent, ChatMessage, ChatSessionState, UserProfile } from "@shared/types";
 
 declare global {
@@ -35,6 +35,13 @@ declare global {
   interface SpeechRecognitionEvent {
     results: ArrayLike<ArrayLike<{ transcript: string }>>;
   }
+}
+
+function normalizeUiBlocks(value: string[] | null | undefined): AssistantTurnPayload["ui_blocks"] {
+  return (value ?? []).filter(
+    (item): item is AssistantTurnPayload["ui_blocks"][number] =>
+      item === "guidance" || item === "care_options" || item === "costs" || item === "emergency",
+  );
 }
 
 function sessionToAnalysis(session: ChatSessionState, agentFlow: AnalyzeResponse["agent_flow"], trace: AnalyzeResponse["trace"]): AnalyzeResponse {
@@ -87,6 +94,8 @@ export default function Page() {
   const [session, setSession] = useState<ChatSessionState | null>(null);
   const [assistantTurn, setAssistantTurn] = useState<AssistantTurnPayload | null>(null);
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
+  const [uiBlocks, setUiBlocks] = useState<AssistantTurnPayload["ui_blocks"]>([]);
+  const [hasHydrated, setHasHydrated] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -94,7 +103,21 @@ export default function Page() {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   const copy = useMemo(() => getUiCopy(language), [language]);
-  const showCarePanel = Boolean(analysis && assistantTurn?.ui_blocks.includes("care_options"));
+  const showCarePanel = Boolean(analysis && (uiBlocks.includes("care_options") || analysis.navigation.hospitals.length > 0));
+
+  function resetChat() {
+    setInput("");
+    setMessages([]);
+    setSession(null);
+    setAssistantTurn(null);
+    setAnalysis(null);
+    setUiBlocks([]);
+    setIsTyping(false);
+    setShowEmergencyOverlay(false);
+    clearChatState();
+    clearLatestAnalysis();
+    clearLatestContext();
+  }
 
   function handleLanguageChange(nextLanguage: UiLanguage) {
     setLanguage(nextLanguage);
@@ -118,7 +141,9 @@ export default function Page() {
       setSession(savedChat.session);
       setAssistantTurn(savedChat.assistantTurn ?? null);
       setAnalysis(savedChat.analysis);
+      setUiBlocks(normalizeUiBlocks(savedChat.uiBlocks ?? savedChat.assistantTurn?.ui_blocks));
     }
+    setHasHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -146,9 +171,10 @@ export default function Page() {
     };
   }, [language]);
 
-  async function runIntent(intent: ChatIntent, prompt?: string) {
+  async function runIntent(intent: ChatIntent, prompt?: string, displayText?: string) {
     const nextLocation = (profile.location || "").trim();
     const nextMessage = (prompt ?? input).trim();
+    const bubbleText = (displayText ?? prompt ?? input).trim();
 
     if (!nextLocation) {
       return;
@@ -160,24 +186,25 @@ export default function Page() {
     if (intent === "symptoms") {
       setMessages((current) =>
         current.length === 0
-          ? [{ id: crypto.randomUUID(), role: "user", content: nextMessage }]
-          : [...current, { id: crypto.randomUUID(), role: "user", content: nextMessage }],
+          ? [{ id: crypto.randomUUID(), role: "user", content: bubbleText || nextMessage }]
+          : [...current, { id: crypto.randomUUID(), role: "user", content: bubbleText || nextMessage }],
       );
       saveLatestContext({ text: nextMessage, location: nextLocation });
     } else {
       const action = assistantTurn?.actions.find((item) => item.intent === intent);
-      const userText = prompt ?? action?.label ?? intent;
+      const userText = bubbleText || action?.label || intent;
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: userText }]);
     }
 
     setIsTyping(true);
     const pendingAssistantId = crypto.randomUUID();
-    setMessages((current) => [...current, { id: pendingAssistantId, role: "assistant", content: "" }]);
+    let assistantInserted = false;
 
     try {
       const final = await streamChatTurn(
         {
           intent,
+          session_id: session?.session_id ?? undefined,
           message: intent === "symptoms" ? nextMessage : prompt,
           location: nextLocation,
           preferred_language: language,
@@ -189,18 +216,23 @@ export default function Page() {
         },
         (chunk) => {
           if (chunk.type === "message" && chunk.message) {
-            setMessages((current) =>
-              current.map((message) =>
+            setMessages((current) => {
+              if (!assistantInserted) {
+                assistantInserted = true;
+                return [...current, { id: pendingAssistantId, role: "assistant", content: chunk.message ?? "" }];
+              }
+              return current.map((message) =>
                 message.id === pendingAssistantId
                   ? { ...message, content: `${message.content}${message.content ? "\n\n" : ""}${chunk.message}` }
                   : message,
-              ),
-            );
+              );
+            });
           }
 
           if (chunk.type === "done" && chunk.session) {
             setSession(chunk.session);
             setAssistantTurn(chunk.response);
+            setUiBlocks(normalizeUiBlocks(chunk.ui_blocks));
             const snapshot = sessionToAnalysis(chunk.session, chunk.agent_flow, chunk.trace);
             setAnalysis(snapshot);
             saveLatestAnalysis(snapshot);
@@ -208,17 +240,18 @@ export default function Page() {
         },
       );
 
+      if (!assistantInserted && final.response.message) {
+        setMessages((current) => [...current, { id: pendingAssistantId, role: "assistant", content: final.response.message }]);
+      }
+
       setSession(final.session);
       setAssistantTurn(final.response);
+      setUiBlocks(normalizeUiBlocks(final.ui_blocks));
       const snapshot = sessionToAnalysis(final.session, final.agent_flow, final.trace);
       setAnalysis(snapshot);
       saveLatestAnalysis(snapshot);
     } catch {
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === pendingAssistantId ? { ...message, content: copy.errorMessage } : message,
-        ),
-      );
+      setMessages((current) => [...current, { id: pendingAssistantId, role: "assistant", content: copy.errorMessage }]);
     } finally {
       setIsTyping(false);
       if (intent === "symptoms") {
@@ -228,16 +261,20 @@ export default function Page() {
   }
 
   useEffect(() => {
+    if (!hasHydrated) {
+      return;
+    }
+
     saveChatState({
       messages,
       session,
       suggestedActions: assistantTurn?.actions ?? [],
-      uiBlocks: assistantTurn?.ui_blocks ?? [],
+      uiBlocks,
       analysis,
       assistantTurn,
       activePanel: null,
     });
-  }, [messages, session, assistantTurn, analysis]);
+  }, [messages, session, assistantTurn, analysis, uiBlocks, hasHydrated]);
 
   function handleVoiceToggle() {
     const recognition = recognitionRef.current;
@@ -258,19 +295,18 @@ export default function Page() {
 
   const embeddedMessages = analysis
     ? [
-        assistantTurn?.follow_up ? (
+        assistantTurn?.follow_up && assistantTurn.follow_up.options.length > 0 ? (
           <div key="follow-up" className="space-y-3 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(148,163,184,0.10)]">
-            <p className="text-sm font-medium text-slate-950">{assistantTurn.follow_up.text}</p>
             <div className="flex flex-wrap gap-3">
               {assistantTurn.follow_up.options.map((option) => (
-                <Button key={option} variant="secondary" onClick={() => void runIntent("symptoms", option)}>
+                <Button key={option} variant="secondary" onClick={() => void runIntent("symptoms", option, option)}>
                   {option}
                 </Button>
               ))}
             </div>
           </div>
         ) : null,
-        assistantTurn?.ui_blocks.includes("emergency") ? (
+        uiBlocks.includes("emergency") ? (
           <div key="emergency" className="rounded-[32px] border border-rose-200 bg-rose-50/90 p-6 text-rose-800 shadow-[0_22px_60px_rgba(244,63,94,0.08)]">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-rose-600">
               <ShieldAlert className="h-4 w-4" />
@@ -293,7 +329,7 @@ export default function Page() {
               <Button
                 key={action.intent}
                 variant="secondary"
-                onClick={() => void runIntent(action.intent, action.prompt ?? undefined)}
+                onClick={() => void runIntent(action.intent, action.prompt ?? undefined, action.label)}
               >
                 {action.label}
               </Button>
@@ -321,6 +357,13 @@ export default function Page() {
             <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-slate-600">{copy.subtext}</p>
           </div>
         </section>
+
+        <div className="mt-8 flex justify-center">
+          <Button variant="secondary" className="gap-2" onClick={resetChat}>
+            <MessageSquarePlus className="h-4 w-4" />
+            {copy.newChat}
+          </Button>
+        </div>
 
         <section className={`mx-auto mt-16 w-full ${showCarePanel ? "max-w-7xl" : "max-w-3xl"}`}>
           <div className={`grid gap-8 ${showCarePanel ? "lg:grid-cols-[minmax(0,1.05fr)_420px]" : "grid-cols-1"}`}>
@@ -379,7 +422,7 @@ export default function Page() {
                   <ConversationCareOptions
                     analysis={analysis}
                     copy={copy}
-                    defaultShowCosts={Boolean(assistantTurn?.ui_blocks.includes("costs"))}
+                    defaultShowCosts={uiBlocks.includes("costs")}
                   />
                 </div>
               </aside>
