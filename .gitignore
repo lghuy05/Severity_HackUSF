@@ -9,3 +9,9 @@ dist/
 frontend/.env.local
 **/.env
 .env
+
+# Firebase credentials - NEVER commit these
+firebase-key.json
+firebase-config.json
+*firebase*.json
+!firebase-config.example.json
