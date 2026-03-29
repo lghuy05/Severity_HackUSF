@@ -26,6 +26,7 @@ type TranslationSet = {
   promptPlaceholder: string;
   locationPlaceholder: string;
   continue: string;
+  newChat: string;
   careAssistant: string;
   reviewing: string;
   understandingIntro: (text: string) => string;
@@ -92,6 +93,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     promptPlaceholder: "Describe what you're feeling in your own words",
     locationPlaceholder: "Your city, ZIP code, or current location",
     continue: "Continue",
+    newChat: "New chat",
     careAssistant: "Care assistant",
     reviewing: "Reviewing",
     understandingIntro: (text) => `I understand this as: ${text}.`,
@@ -149,6 +151,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     promptPlaceholder: "Describe lo que sientes con tus propias palabras",
     locationPlaceholder: "Tu ciudad, código postal o ubicación actual",
     continue: "Continuar",
+    newChat: "Nuevo chat",
     careAssistant: "Asistente de salud",
     reviewing: "Revisando",
     understandingIntro: (text) => `Entiendo esto como: ${text}.`,
@@ -206,6 +209,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     promptPlaceholder: "Décrivez ce que vous ressentez avec vos propres mots",
     locationPlaceholder: "Votre ville, code postal ou position actuelle",
     continue: "Continuer",
+    newChat: "Nouveau chat",
     careAssistant: "Assistant santé",
     reviewing: "Analyse en cours",
     understandingIntro: (text) => `Je comprends cela comme : ${text}.`,
@@ -263,6 +267,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     promptPlaceholder: "Descreva o que você está sentindo com suas próprias palavras",
     locationPlaceholder: "Sua cidade, CEP ou localização atual",
     continue: "Continuar",
+    newChat: "Nova conversa",
     careAssistant: "Assistente de saúde",
     reviewing: "Analisando",
     understandingIntro: (text) => `Entendo isso como: ${text}.`,
@@ -320,6 +325,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     promptPlaceholder: "Mô tả cảm giác của bạn bằng lời của chính bạn",
     locationPlaceholder: "Thành phố, mã ZIP hoặc vị trí hiện tại của bạn",
     continue: "Tiếp tục",
+    newChat: "Cuộc trò chuyện mới",
     careAssistant: "Trợ lý chăm sóc",
     reviewing: "Đang xem xét",
     understandingIntro: (text) => `Tôi hiểu tình trạng này là: ${text}.`,
@@ -377,6 +383,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     promptPlaceholder: "请用你自己的话描述你的感受",
     locationPlaceholder: "你的城市、邮编或当前位置",
     continue: "继续",
+    newChat: "新对话",
     careAssistant: "医疗助手",
     reviewing: "正在分析",
     understandingIntro: (text) => `我理解你的情况是：${text}。`,

@@ -67,6 +67,8 @@ def generate_structured_json(
     except HTTPError as exc:  # pragma: no cover - depends on remote service
         detail = exc.read().decode("utf-8", errors="ignore")
         raise GeminiToolError(f"Gemini HTTP error {exc.code}: {detail}") from exc
+    except TimeoutError as exc:  # pragma: no cover - depends on network
+        raise GeminiToolError("Gemini network timeout") from exc
     except URLError as exc:  # pragma: no cover - depends on network
         raise GeminiToolError(f"Gemini network error: {exc}") from exc
 
@@ -250,11 +252,17 @@ def extract_structured_meaning(
     conversation_summary: str = "",
     pending_question: FollowUpQuestion | None = None,
     follow_up_answers: dict[str, str] | None = None,
+    recent_turns: list[dict[str, str]] | None = None,
+    profile: dict[str, Any] | None = None,
 ) -> SemanticMeaning:
+    recent_turns = recent_turns or []
+    profile = profile or {}
     payload = generate_structured_json(
         prompt=(
             "You are the semantic understanding layer for a healthcare chat assistant. "
             "Interpret the latest user message in context of the current structured state. "
+            "Use the rolling summary for older context and the recent turns for conversational continuity. "
+            "Do not treat the full conversation transcript as available; use only the context provided. "
             "Do not rely on literal keyword matching. Infer likely symptom severity from natural language such as "
             "'5/10 pain', 'kinda bad', or 'feels worse now'. "
             "If a pending follow-up question exists, first decide whether the latest user message answers that question. "
@@ -262,6 +270,10 @@ def extract_structured_meaning(
             "Use the pending question text and expected field as the main interpretation target. "
             "If the answer is sufficient, set answered_pending_question=true, set follow_up_needed=false, "
             "and fill resolved_field and resolved_value as well as any structured fields like severity. "
+            "If you still need a follow-up question, also return which structured field it is asking about in follow_up_field. "
+            "Always set follow_up_field when follow_up_needed=true. "
+            "If the current state already contains a symptom, do not ask for the symptom again. "
+            "If the current state already contains severity, do not ask for severity again unless the user explicitly says it changed. "
             "Do not ask the same question again unless the answer is still insufficient. "
             "For severity follow-ups, interpret numeric scales naturally: "
             "1-3/10 is usually mild, 4-6/10 is moderate, and 7-10/10 is severe. "
@@ -270,9 +282,11 @@ def extract_structured_meaning(
             "Do not block explicit user goals like finding care or comparing costs.\n\n"
             f"Latest user message: {message}\n"
             f"Current state: {state.model_dump(mode='json')}\n"
+            f"Profile: {json.dumps(profile)}\n"
             f"Pending follow-up: {pending_question.model_dump(mode='json') if pending_question else 'None'}\n"
             f"Previous follow-up answers: {json.dumps(follow_up_answers or {})}\n"
-            f"Conversation summary: {conversation_summary or 'None'}"
+            f"Conversation summary: {conversation_summary or 'None'}\n"
+            f"Recent turns: {json.dumps(recent_turns)}"
         ),
         schema={
             "type": "object",
@@ -302,6 +316,10 @@ def extract_structured_meaning(
                 },
                 "resolved_value": {"type": ["string", "null"]},
                 "follow_up_needed": {"type": "boolean"},
+                "follow_up_field": {
+                    "type": ["string", "null"],
+                    "enum": ["severity", "duration", "breathing", "symptom", "other", None],
+                },
                 "follow_up_question": {"type": ["string", "null"]},
                 "follow_up_kind": {
                     "type": "string",
@@ -324,6 +342,7 @@ def extract_structured_meaning(
                 "resolved_field",
                 "resolved_value",
                 "follow_up_needed",
+                "follow_up_field",
                 "follow_up_question",
                 "follow_up_kind",
                 "follow_up_options",
@@ -344,19 +363,29 @@ def generate_assistant_reply(
     cost_options: list[dict[str, Any]] | None = None,
     emergency_instructions: list[str] | None = None,
     follow_up_question: str | None = None,
+    recent_turns: list[dict[str, str]] | None = None,
+    conversation_summary: str = "",
+    profile: dict[str, Any] | None = None,
+    target_language: str = "en",
 ) -> str:
     hospitals = hospitals or []
     cost_options = cost_options or []
     emergency_instructions = emergency_instructions or []
+    recent_turns = recent_turns or []
+    profile = profile or {}
 
     payload = generate_structured_json(
         prompt=(
             "You are a calm, supportive healthcare assistant. "
             "Write exactly one short conversational reply for the user. "
-            "Sound natural, human, and direct, like a strong ChatGPT-style assistant. "
+            "Sound natural, human, warm, and direct, like a strong ChatGPT-style assistant. "
             "Use the structured state and semantic meaning as the source of truth. "
+            "Use the recent turns and rolling summary only to maintain continuity and avoid sounding repetitive. "
             "Do not use labels such as 'Understanding', 'Risk', or 'Next step'. "
             "Do not expose internal system terms, risk classes, or reasoning labels unless urgency is truly high. "
+            "Avoid stiff clinical phrasing unless the situation is truly urgent. "
+            "Be gently reassuring when appropriate, but stay medically careful. "
+            "Use welcoming wording that feels supportive, not bureaucratic. "
             "Translate urgency into natural language. For example: "
             "low urgency -> 'this doesn't look urgent right now', "
             "medium urgency -> 'this is worth getting checked soon', "
@@ -365,10 +394,15 @@ def generate_assistant_reply(
             "If the user asked for care, acknowledge that directly and briefly. "
             "If the user asked about cost, acknowledge that directly and briefly. "
             "Do not repeat obvious information from the user's last message unless needed for clarity. "
+            "Reply entirely in the requested target language. "
             "Do not write more than 2 short paragraphs and keep the reply under 80 words.\n\n"
             f"Latest user message: {latest_message}\n"
+            f"Target language: {target_language}\n"
+            f"Profile: {json.dumps(profile)}\n"
             f"State: {state.model_dump(mode='json')}\n"
             f"Meaning: {meaning.model_dump(mode='json')}\n"
+            f"Conversation summary: {conversation_summary or 'None'}\n"
+            f"Recent turns: {json.dumps(recent_turns)}\n"
             f"Risk reason: {risk_reason or ''}\n"
             f"Hospitals: {json.dumps(hospitals)}\n"
             f"Cost options: {json.dumps(cost_options)}\n"

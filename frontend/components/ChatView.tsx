@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Children, useEffect, useRef, type ReactNode } from "react";
 import { Bot, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -37,8 +37,23 @@ export function ChatView({
   reviewingLabel = "Reviewing",
   embeddedMessages = [],
 }: ChatViewProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const visibleEmbeddedMessages = Children.toArray(embeddedMessages);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages, isTyping, visibleEmbeddedMessages.length]);
+
   return (
-    <section className="flex h-full min-h-[360px] flex-col rounded-[36px] border border-slate-200/80 bg-white/88 p-6 shadow-[0_28px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl">
+    <section className="flex h-full min-h-[360px] flex-col overflow-hidden rounded-[36px] border border-slate-200/80 bg-white/88 p-6 shadow-[0_28px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.26em] text-slate-400">Conversation</p>
@@ -47,7 +62,7 @@ export function ChatView({
         {riskLevel ? <Badge variant={riskVariant(riskLevel)}>{riskLevel} risk</Badge> : null}
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 overflow-y-auto">
+      <div ref={scrollRef} className="flex flex-1 flex-col gap-4 overflow-y-auto pr-1">
         {messages.map((message, index) => {
           const isAssistant = message.role === "assistant";
           return (
@@ -70,13 +85,13 @@ export function ChatView({
                     {assistantLabel}
                   </div>
                 ) : null}
-                <p>{message.content}</p>
+                <p className="whitespace-pre-line break-words">{message.content}</p>
               </div>
             </div>
           );
         })}
 
-        {embeddedMessages.map((content, index) => (
+        {visibleEmbeddedMessages.map((content, index) => (
           <div key={`embedded-${index}`} className="flex animate-fade-in justify-start">
             <div className="w-full max-w-[92%] rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-4 shadow-[0_12px_30px_rgba(148,163,184,0.12)]">
               <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">

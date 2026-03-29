@@ -5,6 +5,14 @@ import type { AnalyzeResponse } from "@shared/types";
 const ANALYSIS_KEY = "heb.latest.analysis";
 const CONTEXT_KEY = "heb.latest.context";
 
+function readStorage(key: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+}
+
 export type LatestContext = {
   text: string;
   location: string;
@@ -15,7 +23,9 @@ export function saveLatestAnalysis(analysis: AnalyzeResponse) {
     return;
   }
 
-  window.sessionStorage.setItem(ANALYSIS_KEY, JSON.stringify(analysis));
+  const serialized = JSON.stringify(analysis);
+  window.localStorage.setItem(ANALYSIS_KEY, serialized);
+  window.sessionStorage.setItem(ANALYSIS_KEY, serialized);
 }
 
 export function loadLatestAnalysis(): AnalyzeResponse | null {
@@ -23,7 +33,7 @@ export function loadLatestAnalysis(): AnalyzeResponse | null {
     return null;
   }
 
-  const raw = window.sessionStorage.getItem(ANALYSIS_KEY);
+  const raw = readStorage(ANALYSIS_KEY);
   if (!raw) {
     return null;
   }
@@ -40,7 +50,9 @@ export function saveLatestContext(context: LatestContext) {
     return;
   }
 
-  window.sessionStorage.setItem(CONTEXT_KEY, JSON.stringify(context));
+  const serialized = JSON.stringify(context);
+  window.localStorage.setItem(CONTEXT_KEY, serialized);
+  window.sessionStorage.setItem(CONTEXT_KEY, serialized);
 }
 
 export function loadLatestContext(): LatestContext | null {
@@ -48,7 +60,7 @@ export function loadLatestContext(): LatestContext | null {
     return null;
   }
 
-  const raw = window.sessionStorage.getItem(CONTEXT_KEY);
+  const raw = readStorage(CONTEXT_KEY);
   if (!raw) {
     return null;
   }
@@ -58,4 +70,22 @@ export function loadLatestContext(): LatestContext | null {
   } catch {
     return null;
   }
+}
+
+export function clearLatestAnalysis() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(ANALYSIS_KEY);
+  window.sessionStorage.removeItem(ANALYSIS_KEY);
+}
+
+export function clearLatestContext() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(CONTEXT_KEY);
+  window.sessionStorage.removeItem(CONTEXT_KEY);
 }

@@ -53,6 +53,50 @@ class HealthcareOrchestrator:
         )
         self.router = A2ARouter(self.registry)
 
+    def _should_trigger_emergency(
+        self,
+        *,
+        raw_text: str,
+        normalized_text: str | None = None,
+        detected_symptoms: list[str] | None = None,
+        known_symptom: str | None = None,
+    ) -> bool:
+        text = " ".join(
+            part.strip().lower()
+            for part in [raw_text, normalized_text or "", known_symptom or ""]
+            if part and part.strip()
+        )
+        symptoms = {item.strip().lower() for item in (detected_symptoms or []) if item.strip()}
+
+        emergency_phrases = {
+            "chest pain",
+            "shortness of breath",
+            "trouble breathing",
+            "difficulty breathing",
+            "breathing difficulty",
+            "stroke",
+            "fainted",
+            "fainting",
+            "severe bleeding",
+            "unconscious",
+            "seizure",
+            "passed out",
+        }
+        emergency_combinations = [
+            {"chest pain", "dizzy"},
+            {"chest pain", "dizziness"},
+            {"chest pain", "shortness of breath"},
+            {"chest pain", "trouble breathing"},
+        ]
+
+        if any(phrase in text for phrase in emergency_phrases):
+            return True
+        if any(group.issubset(symptoms) for group in emergency_combinations):
+            return True
+        if "call 911" in text or "ambulance" in text:
+            return True
+        return False
+
     def _session_to_message(self, request: ChatTurnRequest) -> AgentMessage:
         session = request.session or (session_store.get(request.session_id) if request.session_id else None)
         profile = request.profile or (session.profile if session else UserProfile(location=request.location))
@@ -120,6 +164,58 @@ class HealthcareOrchestrator:
     def _set_state(self, message: AgentMessage, state: AssistantState) -> None:
         message.metadata["assistant_state"] = state.model_dump(mode="json")
 
+    def _history_items(self, message: AgentMessage) -> list[dict[str, str]]:
+        history: list[dict[str, str]] = []
+        for item in list(message.metadata.get("messages", [])):
+            if isinstance(item, dict):
+                history.append(
+                    {
+                        "role": str(item.get("role", "assistant")),
+                        "content": str(item.get("content", "")),
+                    }
+                )
+            else:
+                history.append(
+                    {
+                        "role": str(getattr(item, "role", "assistant")),
+                        "content": str(getattr(item, "content", "")),
+                    }
+                )
+        return history
+
+    def _summarize_older_turns(self, history: list[dict[str, str]], *, keep_recent: int = 3) -> str:
+        older_turns = history[:-keep_recent] if len(history) > keep_recent else []
+        if not older_turns:
+            return ""
+
+        condensed: list[str] = []
+        for item in older_turns[-4:]:
+            content = " ".join(item["content"].split())
+            if not content:
+                continue
+            condensed.append(f"{item['role']}: {content[:70]}")
+        return " | ".join(condensed)
+
+    def _recent_turns(self, message: AgentMessage, *, limit: int = 3) -> list[dict[str, str]]:
+        history = self._history_items(message)
+        recent = history[-limit:]
+        return [
+            {"role": item["role"], "content": " ".join(item["content"].split())[:160]}
+            for item in recent
+            if item["content"].strip()
+        ]
+
+    def _refresh_conversation_memory(self, message: AgentMessage) -> None:
+        history = self._history_items(message)
+        message.metadata["messages"] = history
+        message.metadata["conversation_summary"] = self._summarize_older_turns(history)
+
+    def _profile_context(self, message: AgentMessage) -> dict[str, object]:
+        profile = message.metadata.get("profile", {})
+        if isinstance(profile, dict):
+            return profile
+        return {}
+
     def _extract_semantic_meaning(
         self,
         message: AgentMessage,
@@ -133,6 +229,8 @@ class HealthcareOrchestrator:
                 conversation_summary=str(message.metadata.get("conversation_summary", "")),
                 pending_question=pending_question,
                 follow_up_answers=message.metadata.get("follow_up_answers", {}),
+                recent_turns=self._recent_turns(message),
+                profile=self._profile_context(message),
             )
             append_trace(
                 message,
@@ -158,6 +256,7 @@ class HealthcareOrchestrator:
                 user_goal="unclear",
                 has_enough_info=bool(state.symptom),
                 follow_up_needed=not bool(state.symptom),
+                follow_up_field=None if state.symptom else "symptom",
                 follow_up_question=None if state.symptom else "Can you tell me the main symptom you are feeling?",
                 follow_up_kind="free_text",
                 follow_up_options=[],
@@ -188,6 +287,12 @@ class HealthcareOrchestrator:
         merged = [part.strip() for part in existing.split(",") if part.strip()]
         merged.extend(cleaned)
         return ", ".join(dict.fromkeys(merged))
+
+    def is_field_missing(self, state: AssistantState, field: str | None) -> bool:
+        if not field or field == "other":
+            return True
+        value = getattr(state, field, None)
+        return value in [None, "", "unknown"]
 
     def _merge_state_from_meaning(self, state: AssistantState, meaning: SemanticMeaning) -> AssistantState:
         merged = state.model_copy(deep=True)
@@ -225,6 +330,107 @@ class HealthcareOrchestrator:
 
         merged.missing_fields = ["follow_up"] if meaning.follow_up_needed and meaning.urgency != "high" else []
         return merged
+
+    def _infer_follow_up_field(
+        self,
+        *,
+        meaning: SemanticMeaning,
+        pending_question: FollowUpQuestion | None,
+    ) -> str | None:
+        if meaning.follow_up_field:
+            return meaning.follow_up_field
+        if pending_question and meaning.answered_pending_question:
+            return None
+        return None
+
+    def _suppress_follow_up(self, meaning: SemanticMeaning) -> SemanticMeaning:
+        adjusted = meaning.model_copy(deep=True)
+        adjusted.follow_up_needed = False
+        adjusted.follow_up_field = None
+        adjusted.follow_up_question = None
+        adjusted.follow_up_kind = "free_text"
+        adjusted.follow_up_options = []
+        return adjusted
+
+    def _reconcile_follow_up_with_known_state(
+        self,
+        *,
+        state: AssistantState,
+        meaning: SemanticMeaning,
+        pending_question: FollowUpQuestion | None,
+        message: AgentMessage,
+    ) -> SemanticMeaning:
+        adjusted = meaning.model_copy(deep=True)
+        if (
+            pending_question
+            and adjusted.answered_pending_question
+            and adjusted.follow_up_needed
+            and adjusted.follow_up_question
+            and adjusted.follow_up_question.strip().lower() == pending_question.text.strip().lower()
+        ):
+            adjusted = self._suppress_follow_up(adjusted)
+            append_trace(
+                message,
+                event="state_updated",
+                agent="root_agent",
+                detail="Cleared repeated follow-up because the pending question was already answered this turn.",
+            )
+        return adjusted
+
+    def _validate_semantic_follow_up(
+        self,
+        *,
+        state_before: AssistantState,
+        merged_state: AssistantState,
+        meaning: SemanticMeaning,
+        pending_question: FollowUpQuestion | None,
+        message: AgentMessage,
+    ) -> SemanticMeaning:
+        if not meaning.follow_up_needed or not meaning.follow_up_question:
+            return meaning
+
+        adjusted = meaning.model_copy(deep=True)
+        adjusted.follow_up_field = self._infer_follow_up_field(meaning=adjusted, pending_question=pending_question)
+        target_field = adjusted.follow_up_field
+
+        if target_field and not self.is_field_missing(merged_state, target_field):
+            append_trace(
+                message,
+                event="state_updated",
+                agent="root_agent",
+                detail=f"Suppressed semantic follow-up for known field '{target_field}'.",
+            )
+            return self._suppress_follow_up(adjusted)
+
+        if pending_question and adjusted.answered_pending_question and adjusted.follow_up_needed:
+            if not target_field:
+                append_trace(
+                    message,
+                    event="state_updated",
+                    agent="root_agent",
+                    detail="Suppressed ambiguous semantic follow-up after resolving the pending question.",
+                )
+                return self._suppress_follow_up(adjusted)
+            if target_field == pending_question.expected_field:
+                append_trace(
+                    message,
+                    event="state_updated",
+                    agent="root_agent",
+                    detail=f"Suppressed repeated follow-up for already resolved field '{target_field}'.",
+                )
+                return self._suppress_follow_up(adjusted)
+            if target_field in {"symptom", "severity"} and (
+                not self.is_field_missing(state_before, target_field) or not self.is_field_missing(merged_state, target_field)
+            ):
+                append_trace(
+                    message,
+                    event="state_updated",
+                    agent="root_agent",
+                    detail=f"Suppressed contradictory follow-up after resolution because '{target_field}' is already known.",
+                )
+                return self._suppress_follow_up(adjusted)
+
+        return adjusted
 
     def _record_follow_up_answer(
         self,
@@ -364,6 +570,7 @@ class HealthcareOrchestrator:
                 updated_meaning.resolved_field = "severity"
                 updated_meaning.resolved_value = parsed
                 updated_meaning.follow_up_needed = False
+                updated_meaning.follow_up_field = None
                 updated_meaning.follow_up_question = None
                 updated_meaning.follow_up_options = []
                 updated_meaning.has_enough_info = True
@@ -375,6 +582,7 @@ class HealthcareOrchestrator:
                     detail=f"Severity resolved from follow-up fallback parser as {parsed}.",
                 )
             elif updated_meaning.follow_up_needed and updated_meaning.follow_up_question == pending_question.text:
+                updated_meaning.follow_up_field = "severity"
                 updated_meaning.follow_up_question = "If you had to rate it from 1 to 10, how strong is it right now?"
                 updated_meaning.follow_up_kind = "free_text"
                 updated_meaning.follow_up_options = []
@@ -422,9 +630,9 @@ class HealthcareOrchestrator:
     def _build_follow_up_from_meaning(self, meaning: SemanticMeaning) -> FollowUpQuestion | None:
         if not meaning.follow_up_needed or not meaning.follow_up_question:
             return None
-        expected_field = "other"
+        expected_field = meaning.follow_up_field or "other"
         question_text = meaning.follow_up_question.lower()
-        if meaning.severity == "unknown" or any(term in question_text for term in ["strong", "pain", "bad", "rate"]):
+        if expected_field == "other" and (meaning.severity == "unknown" or any(term in question_text for term in ["strong", "pain", "bad", "rate"])):
             expected_field = "severity"
         return FollowUpQuestion(
             question_id="semantic_follow_up",
@@ -497,6 +705,10 @@ class HealthcareOrchestrator:
                 cost_options=cost_options,
                 emergency_instructions=message.emergency_instructions,
                 follow_up_question=follow_up_question.text if follow_up_question else None,
+                recent_turns=self._recent_turns(message),
+                conversation_summary=str(message.metadata.get("conversation_summary", "")),
+                profile=self._profile_context(message),
+                target_language=(message.preferred_language or "en"),
             )
         except GeminiToolError:
             if follow_up_question:
@@ -512,16 +724,10 @@ class HealthcareOrchestrator:
             return "This doesn't look urgent right now. I can help you decide what to do next."
 
     def _append_history(self, message: AgentMessage, *, role: str, content: str) -> None:
-        history = []
-        for item in list(message.metadata.get("messages", [])):
-            if isinstance(item, dict):
-                history.append({"role": item.get("role", "assistant"), "content": item.get("content", "")})
-            else:
-                history.append({"role": getattr(item, "role", "assistant"), "content": getattr(item, "content", "")})
+        history = self._history_items(message)
         history.append({"role": role, "content": content})
         message.metadata["messages"] = history
-        recent = history[-6:]
-        message.metadata["conversation_summary"] = " | ".join(f"{item['role']}: {item['content'][:120]}" for item in recent)
+        self._refresh_conversation_memory(message)
 
     def _translate_outgoing(
         self,
@@ -535,11 +741,14 @@ class HealthcareOrchestrator:
         if target_language.startswith("en"):
             return texts, follow_up_question, actions
 
-        source_texts = list(texts)
+        source_texts: list[str] = []
         if follow_up_question:
             source_texts.append(follow_up_question.text)
             source_texts.extend(follow_up_question.options)
         source_texts.extend(action.label for action in actions)
+
+        if not source_texts:
+            return texts, follow_up_question, actions
 
         try:
             translated = translate_text_items(texts=source_texts, target_language=target_language)
@@ -547,8 +756,7 @@ class HealthcareOrchestrator:
             return texts, follow_up_question, actions
 
         cursor = 0
-        translated_messages = translated[cursor : cursor + len(texts)]
-        cursor += len(texts)
+        translated_messages = texts
 
         translated_question = follow_up_question
         if follow_up_question:
@@ -612,6 +820,12 @@ class HealthcareOrchestrator:
         state = state_before
         answered_by_fallback = False
         meaning = self._extract_semantic_meaning(message, state, pending_question_before)
+        meaning = self._reconcile_follow_up_with_known_state(
+            state=state,
+            meaning=meaning,
+            pending_question=pending_question_before,
+            message=message,
+        )
         if pending_question_before and not meaning.answered_pending_question and meaning.follow_up_needed:
             state, meaning, answered_by_fallback = self._apply_follow_up_fallback(
                 pending_question=pending_question_before,
@@ -639,6 +853,14 @@ class HealthcareOrchestrator:
             )
             current_session.pending_question = None
 
+        merged_state = self._merge_state_from_meaning(state, meaning)
+        meaning = self._validate_semantic_follow_up(
+            state_before=state,
+            merged_state=merged_state,
+            meaning=meaning,
+            pending_question=pending_question_before,
+            message=message,
+        )
         state = self._merge_state_from_meaning(state, meaning)
         answered_pending = bool(
             pending_question_before
@@ -667,7 +889,16 @@ class HealthcareOrchestrator:
                 else:
                     state.symptom = state.symptom or message.translated_text or message.normalized_text or message.raw_text
 
-            if meaning.urgency == "high" and not message.emergency_flag:
+            if (
+                meaning.urgency == "high"
+                and not message.emergency_flag
+                and self._should_trigger_emergency(
+                    raw_text=message.raw_text,
+                    normalized_text=message.normalized_text or message.translated_text,
+                    detected_symptoms=meaning.symptoms,
+                    known_symptom=state.symptom,
+                )
+            ):
                 message = self.router.handoff(message, from_agent="root_agent", to_agent="emergency_agent", intent="issue_emergency_guidance")
                 state.risk = "high"
 
@@ -771,7 +1002,10 @@ class HealthcareOrchestrator:
             message = self.router.handoff(message, from_agent="root_agent", to_agent="language_agent", intent="normalize_and_translate")
             message = self.router.handoff(message, from_agent="language_agent", to_agent="triage_agent", intent="assess_urgency")
 
-            if message.risk_level == "high":
+            if self._should_trigger_emergency(
+                raw_text=message.raw_text,
+                normalized_text=message.normalized_text or message.translated_text,
+            ):
                 message = self.router.handoff(message, from_agent="triage_agent", to_agent="emergency_agent", intent="issue_emergency_guidance")
 
             message = self.router.handoff(message, from_agent="triage_agent", to_agent="navigation_agent", intent="find_nearby_care")
