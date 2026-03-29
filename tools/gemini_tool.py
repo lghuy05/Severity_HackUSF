@@ -246,6 +246,29 @@ def translate_text_items(*, texts: list[str], target_language: str) -> list[str]
     return [str(item) for item in translations]
 
 
+def summarize_appointment_reason(chat_history: str) -> str:
+    payload = generate_structured_json(
+        prompt=(
+            "You are a medical assistant. Based on the following conversation between a patient and a healthcare assistant,\n"
+            "write a single concise sentence (max 20 words) summarizing the medical reason why this patient needs to see a doctor.\n"
+            "Do not copy the conversation directly. Summarize it as a reason for a medical appointment.\n"
+            "Only return the summary sentence, nothing else.\n\n"
+            f"Conversation:\n{chat_history}"
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+            },
+            "required": ["summary"],
+        },
+    )
+    summary = str(payload.get("summary", "")).strip()
+    if not summary:
+        raise GeminiToolError("Gemini returned empty appointment summary")
+    return summary
+
+
 def extract_structured_meaning(
     message: str,
     state: AssistantState,

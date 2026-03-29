@@ -57,6 +57,7 @@ export function saveUserProfile(profile: UserProfile) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
   window.localStorage.setItem("profile", JSON.stringify(profile));
+  window.dispatchEvent(new CustomEvent("severity-profile-updated", { detail: profile }));
 }
 
 export function loadUserProfile(): UserProfile {
