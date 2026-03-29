@@ -25,6 +25,7 @@ from backend.schemas import (
 from core.runner import build_agent_flow, build_response
 from core.tracing import append_trace, trace_span
 from backend.session_store import session_store
+from specialized.call_scheduling_agent import CallSchedulingAgent
 from specialized.contact_agent import ContactAgent
 from specialized.cost_agent import CostAgent
 from specialized.emergency_agent import EmergencyAgent
@@ -48,6 +49,7 @@ class HealthcareOrchestrator:
                 NavigationAgent(),
                 CostAgent(),
                 ContactAgent(),
+                CallSchedulingAgent(),
                 EmergencyAgent(),
             ]
         )
