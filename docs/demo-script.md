@@ -1,9 +1,9 @@
 # Demo Script
 
-1. Open the frontend and mention that the product supports chat and voice perception.
-2. Click voice input or paste `I feel chest pain and dizzy`.
-3. Submit the request and point to the `AgentFlowPanel` as each agent updates.
-4. Show the high-risk triage result and the emergency banner.
-5. Highlight nearby hospitals in the map panel.
-6. Read the provider-ready communication message from the chat stream.
-7. Close by explaining that each agent is modular and can be swapped for Gemini or other model backends later.
+1. Open the frontend and explain that the product accepts free-form symptom input.
+2. Submit a high-risk prompt such as `I have chest pain and shortness of breath`.
+3. Point out the staged agent flow: language, triage, navigation, cost, action.
+4. Show that the backend returns emergency guidance plus nearby real facilities from Google Places.
+5. Highlight the estimated cost options and provider-facing summary in the returned response.
+6. If needed, run `agents/.venv/bin/python test_rootagent.py` to show the full structured trace.
+7. Close by explaining that the system uses a single orchestrator, explicit A2A handoffs, specialized agents, and tool-backed integrations.

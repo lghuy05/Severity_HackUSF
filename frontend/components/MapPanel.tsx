@@ -1,4 +1,4 @@
-import { ArrowUpRight, Clock3, MapPinned, Phone } from "lucide-react";
+import { ArrowUpRight, MapPinned, Phone } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ export function MapPanel({ hospitals }: MapPanelProps) {
             <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Navigation</p>
             <CardTitle className="mt-1 text-xl">Nearby care options</CardTitle>
             <CardDescription className="mt-2 max-w-md">
-              Shortlisted hospitals appear as the flow opens up. The map stays secondary to the guidance thread.
+              These care options are based on your location and the current guidance from the backend.
             </CardDescription>
           </div>
           <Badge>Live routing</Badge>
@@ -65,18 +65,18 @@ export function MapPanel({ hospitals }: MapPanelProps) {
                 <p className="text-sm text-slate-300">{hospital.address}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-400">
                   <span className="inline-flex items-center gap-1.5">
-                    <Clock3 className="h-3.5 w-3.5" />
-                    {index === 0 ? "12 min away" : index === 1 ? "18 min away" : "23 min away"}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
                     <Phone className="h-3.5 w-3.5" />
                     {hospital.phone}
                   </span>
+                  <span>{hospital.open_now ? "Open now" : "Hours unavailable"}</span>
                 </div>
               </div>
               <Button asChild variant="secondary" size="sm" className="shrink-0">
                 <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hospital.address)}`}
+                  href={
+                    hospital.google_maps_uri ??
+                    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(hospital.address)}`
+                  }
                   target="_blank"
                   rel="noreferrer"
                 >

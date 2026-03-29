@@ -5,15 +5,15 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0f14] disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
         default:
-          "bg-white text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.12)] hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(255,255,255,0.18)]",
+          "bg-slate-950 text-white shadow-[0_16px_40px_rgba(15,23,42,0.18)] hover:-translate-y-0.5 hover:bg-slate-900 hover:shadow-[0_20px_46px_rgba(15,23,42,0.22)]",
         secondary:
-          "border border-white/[0.12] bg-white/[0.06] text-white backdrop-blur-xl hover:bg-white/10",
-        ghost: "text-slate-300 hover:bg-white/[0.08] hover:text-white",
+          "border border-slate-200 bg-white text-slate-700 shadow-[0_10px_28px_rgba(148,163,184,0.10)] hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950",
+        ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
         emergency:
           "bg-rose-500 text-white shadow-[0_16px_36px_rgba(244,63,94,0.34)] hover:bg-rose-400 hover:shadow-[0_18px_40px_rgba(244,63,94,0.44)]",
       },

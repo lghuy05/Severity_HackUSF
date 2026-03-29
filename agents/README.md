@@ -1,56 +1,38 @@
 # Agents
 
-Google ADK + A2A-style multi-agent package for the healthcare navigator.
+This folder is now a compatibility and ADK-support surface, not the sole source of truth for orchestration.
 
-## Scope
+## What Is Authoritative
 
-This folder is intentionally separate from `backend/`.
+The authoritative runtime is:
 
-- `agents/` owns agent definitions, routing, and Gemini/ADK setup.
-- `backend/` owns FastAPI endpoints and API orchestration.
+- `backend/orchestrator.py`
+- `specialized/`
+- `tools/`
+- `a2a/router.py`
+- `core/`
 
-## Setup
+The files in `agents/` primarily provide:
 
-```bash
-cd agents
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+- ADK model/config helpers
+- compatibility exports for older imports
+- a stable `agents.root_agent.run_pipeline(...)` convenience entrypoint
 
-Set:
+## Current Layout
 
-```env
-GEMINI_API_KEY=your_key
-```
-
-Optional:
-
-```env
-GEMINI_MODEL=gemini-2.5-flash
-```
-
-## Layout
-
-- `core/base_agent.py`: ADK-backed agent wrapper
-- `core/agent_registry.py`: shared agent registry
-- `core/a2a_router.py`: visible A2A-style message routing
-- `language_agent.py`: translation and simplification
-- `triage_agent.py`: low/medium/high risk classification
-- `navigation_agent.py`: mock care-site recommendations
-- `summary_agent.py`: structured JSON summary
-- `communication_agent.py`: provider handoff formatting
-- `emergency_agent.py`: urgent escalation guidance
-- `root_agent.py`: orchestrator and `run_pipeline(...)`
+- `config.py`: Gemini / ADK model configuration
+- `message_types.py`: A2A envelope type
+- `registry.py`: agent registry abstraction
+- `root_agent.py`: compatibility wrapper around the backend orchestrator
+- `language_agent.py`, `triage_agent.py`, `navigation_agent.py`, `communication_agent.py`, `emergency_agent.py`: compatibility exports that point to the specialized agents
 
 ## Quick Test
 
 ```bash
 cd /home/yui/Work/hackathon/Severity
-PYTHONPATH=. agents/.venv/bin/python - <<'PY'
-from agents.root_agent import run_pipeline
-
-result = run_pipeline("I feel chest pain and dizzy", "San Francisco, CA")
-print(result.model_dump())
-PY
+agents/.venv/bin/python test_rootagent.py
 ```
+
+## Important Note
+
+The current codebase instantiates ADK agent objects, but orchestration still happens through the local Python orchestrator and A2A router. Future ADK-runtime work should build on the specialized agents rather than reintroducing a second execution path here.

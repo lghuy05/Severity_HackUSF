@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Bot, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,9 @@ type ChatViewProps = {
   isTyping?: boolean;
   riskLevel?: RiskLevel;
   title?: string;
+  assistantLabel?: string;
+  reviewingLabel?: string;
+  embeddedMessages?: ReactNode[];
 };
 
 function riskVariant(riskLevel?: RiskLevel) {
@@ -24,18 +28,26 @@ function riskVariant(riskLevel?: RiskLevel) {
   return "default" as const;
 }
 
-export function ChatView({ messages, isTyping = false, riskLevel, title = "Care guidance" }: ChatViewProps) {
+export function ChatView({
+  messages,
+  isTyping = false,
+  riskLevel,
+  title = "Care guidance",
+  assistantLabel = "Care assistant",
+  reviewingLabel = "Reviewing",
+  embeddedMessages = [],
+}: ChatViewProps) {
   return (
-    <section className="flex h-full min-h-[420px] flex-col rounded-[32px] border border-white/10 bg-white/[0.06] p-4 shadow-[0_24px_80px_rgba(4,9,22,0.38)] backdrop-blur-2xl">
-      <div className="mb-4 flex items-center justify-between gap-4 px-2 pt-1">
+    <section className="flex h-full min-h-[360px] flex-col rounded-[36px] border border-slate-200/80 bg-white/88 p-6 shadow-[0_28px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl">
+      <div className="mb-6 flex items-center justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.26em] text-slate-500">AI Navigator</p>
-          <h2 className="mt-1 text-xl font-semibold text-white">{title}</h2>
+          <p className="text-xs uppercase tracking-[0.26em] text-slate-400">Conversation</p>
+          <h2 className="mt-1 text-2xl font-semibold text-slate-950">{title}</h2>
         </div>
         {riskLevel ? <Badge variant={riskVariant(riskLevel)}>{riskLevel} risk</Badge> : null}
       </div>
 
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-1 pb-1">
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto">
         {messages.map((message, index) => {
           const isAssistant = message.role === "assistant";
           return (
@@ -46,16 +58,16 @@ export function ChatView({ messages, isTyping = false, riskLevel, title = "Care 
             >
               <div
                 className={cn(
-                  "max-w-[86%] rounded-[26px] px-4 py-3 text-sm leading-7 shadow-[0_14px_40px_rgba(5,9,24,0.22)]",
+                  "max-w-[86%] rounded-[28px] px-5 py-4 text-sm leading-7 shadow-[0_12px_30px_rgba(148,163,184,0.12)]",
                   isAssistant
-                    ? "border border-white/10 bg-[#11192a]/92 text-slate-100"
-                    : "bg-[linear-gradient(135deg,rgba(59,130,246,0.85),rgba(129,140,248,0.9))] text-white",
+                    ? "border border-slate-200 bg-slate-50 text-slate-700"
+                    : "bg-[linear-gradient(135deg,#0f172a,#1e293b)] text-white",
                 )}
               >
                 {isAssistant ? (
                   <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
                     <Bot className="h-3.5 w-3.5" />
-                    Assistant
+                    {assistantLabel}
                   </div>
                 ) : null}
                 <p>{message.content}</p>
@@ -64,12 +76,24 @@ export function ChatView({ messages, isTyping = false, riskLevel, title = "Care 
           );
         })}
 
+        {embeddedMessages.map((content, index) => (
+          <div key={`embedded-${index}`} className="flex animate-fade-in justify-start">
+            <div className="w-full max-w-[92%] rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-4 shadow-[0_12px_30px_rgba(148,163,184,0.12)]">
+              <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                <Bot className="h-3.5 w-3.5" />
+                {assistantLabel}
+              </div>
+              {content}
+            </div>
+          </div>
+        ))}
+
         {isTyping ? (
           <div className="flex animate-fade-in justify-start">
-            <div className="rounded-[24px] border border-white/10 bg-[#11192a]/92 px-4 py-3 text-slate-300">
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-3 text-slate-500">
               <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
                 <Sparkles className="h-3.5 w-3.5" />
-                Thinking
+                {reviewingLabel}
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="typing-dot" />

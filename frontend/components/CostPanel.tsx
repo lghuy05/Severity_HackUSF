@@ -2,20 +2,14 @@ import { Clock3, CreditCard, ShieldCheck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { HospitalLocation, RiskLevel } from "@shared/types";
+import type { CostOption, RiskLevel } from "@shared/types";
 
 type CostPanelProps = {
-  hospitals: HospitalLocation[];
+  costOptions: CostOption[];
   riskLevel?: RiskLevel;
 };
 
-const MOCK_COSTS = [
-  { estimate: "$180", wait: "22 min", coverage: "In-network" },
-  { estimate: "$240", wait: "14 min", coverage: "Partial" },
-  { estimate: "$95", wait: "35 min", coverage: "Community pricing" },
-];
-
-export function CostPanel({ hospitals, riskLevel }: CostPanelProps) {
+export function CostPanel({ costOptions, riskLevel }: CostPanelProps) {
   return (
     <Card className="animate-fade-in">
       <CardHeader className="border-b border-white/[0.08] pb-4">
@@ -31,28 +25,28 @@ export function CostPanel({ hospitals, riskLevel }: CostPanelProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-3 pt-6">
-        {hospitals.map((hospital, index) => {
-          const detail = MOCK_COSTS[index] ?? MOCK_COSTS[MOCK_COSTS.length - 1];
+        {costOptions.map((option) => {
           return (
             <div
-              key={`${hospital.name}-${hospital.address}-cost`}
+              key={`${option.provider}-${option.care_type}-${option.estimated_cost}`}
               className="grid gap-4 rounded-[24px] border border-white/10 bg-white/[0.04] px-4 py-4 md:grid-cols-[1.4fr,0.8fr,0.8fr,0.9fr]"
             >
               <div>
-                <p className="text-sm font-medium text-white">{hospital.name}</p>
-                <p className="mt-1 text-sm text-slate-300">{hospital.address}</p>
+                <p className="text-sm font-medium text-white">{option.provider}</p>
+                <p className="mt-1 text-sm text-slate-300">{option.care_type}</p>
+                <p className="mt-2 text-xs text-slate-400">{option.notes}</p>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-200">
                 <CreditCard className="h-4 w-4 text-sky-300" />
-                {detail.estimate}
+                {option.estimated_cost}
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-200">
                 <Clock3 className="h-4 w-4 text-violet-300" />
-                {detail.wait}
+                {option.estimated_wait ?? "Unknown"}
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-200">
                 <ShieldCheck className="h-4 w-4 text-emerald-300" />
-                {detail.coverage}
+                {option.coverage_summary ?? "Coverage varies"}
               </div>
             </div>
           );
