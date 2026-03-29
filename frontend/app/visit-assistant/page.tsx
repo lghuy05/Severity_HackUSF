@@ -1,13 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Globe2, Languages, Loader2, Mic, PhoneCall, Sparkles, Square, Stethoscope, Volume2 } from "lucide-react";
+import { CheckCircle2, FilePlus2, Globe2, Languages, Loader2, Mic, Sparkles, Square, Stethoscope, Volume2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { extractVisitNote, scheduleVisitAppointment, summarizeVisitConversation, translateVisitTurn } from "@/lib/api";
-import { DEFAULT_PROFILE, loadUserProfile } from "@/lib/session-store";
-import type { VisitAssistantUserProfile, VisitScheduleResponse, VisitStructuredNote, VisitTranslateTurnResponse } from "@shared/types";
+import { extractVisitNote, saveVisitNote, summarizeVisitConversation, translateVisitTurn } from "@/lib/api";
+import type { VisitStructuredNote, VisitTranslateTurnResponse } from "@shared/types";
 
 declare global {
   interface Window {
@@ -73,12 +73,13 @@ export default function VisitAssistantPage() {
   const [visitInterimTranscript, setVisitInterimTranscript] = useState("");
   const [note, setNote] = useState<VisitStructuredNote | null>(null);
   const [conversationSummary, setConversationSummary] = useState("");
-  const [scheduleResult, setScheduleResult] = useState<VisitScheduleResponse | null>(null);
+  const [noteTitle, setNoteTitle] = useState("");
+  const [savedNoteId, setSavedNoteId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [isSupported, setIsSupported] = useState(false);
   const [isVisitRecording, setIsVisitRecording] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isScheduling, setIsScheduling] = useState(false);
+  const [isSavingNote, setIsSavingNote] = useState(false);
   const [translatorSourceA, setTranslatorSourceA] = useState("");
   const [translatorInterimA, setTranslatorInterimA] = useState("");
   const [translatorSourceB, setTranslatorSourceB] = useState("");
@@ -91,15 +92,6 @@ export default function VisitAssistantPage() {
   const [translatorSummary, setTranslatorSummary] = useState("");
   const [translatorNote, setTranslatorNote] = useState<VisitStructuredNote | null>(null);
   const [isSummarizingTranslator, setIsSummarizingTranslator] = useState(false);
-  const [form, setForm] = useState<VisitAssistantUserProfile>({
-    full_name: "",
-    phone_number: "",
-    language: DEFAULT_PROFILE.language,
-    location: DEFAULT_PROFILE.location,
-    age: DEFAULT_PROFILE.age,
-    gender: DEFAULT_PROFILE.gender,
-  });
-
   useEffect(() => {
     translatorLanguageARef.current = translatorLanguageA;
   }, [translatorLanguageA]);
@@ -117,14 +109,6 @@ export default function VisitAssistantPage() {
   }, [translatorSourceB]);
 
   useEffect(() => {
-    const savedProfile = loadUserProfile();
-    setForm((current) => ({
-      ...current,
-      language: savedProfile.language || "en",
-      location: savedProfile.location || "",
-      age: savedProfile.age,
-      gender: savedProfile.gender,
-    }));
 
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
@@ -246,19 +230,19 @@ export default function VisitAssistantPage() {
   }, []);
 
   const canGenerate = visitTranscript.trim().length > 0 && !isGenerating;
-  const canSchedule = Boolean(note) && !isScheduling;
+  const canSaveNote = Boolean(note && conversationSummary.trim() && noteTitle.trim() && !isSavingNote);
   const symptoms = note?.symptoms ?? EMPTY_NOTE.symptoms;
   const actionItems = note?.action_items ?? EMPTY_NOTE.action_items;
 
-  const scheduleHint = useMemo(() => {
+  const saveHint = useMemo(() => {
     if (!note) {
       return "Generate a structured note first.";
     }
-    if (!form.phone_number.trim()) {
-      return "Add a phone number to send the visit note into the scheduling flow.";
+    if (!noteTitle.trim()) {
+      return "Name the note before saving it.";
     }
-    return "Ready to hand off to VAPI scheduling.";
-  }, [form.phone_number, note]);
+    return "Ready to save this visit note to your record.";
+  }, [note, noteTitle]);
 
   function clearAllInterim() {
     setVisitInterimTranscript("");
@@ -337,7 +321,7 @@ export default function VisitAssistantPage() {
     }
 
     setError("");
-    setScheduleResult(null);
+    setSavedNoteId(null);
     setIsGenerating(true);
     try {
       const [noteResponse, summaryResponse] = await Promise.all([
@@ -346,6 +330,9 @@ export default function VisitAssistantPage() {
       ]);
       setNote(noteResponse.note);
       setConversationSummary(summaryResponse.summary);
+      if (!noteTitle.trim()) {
+        setNoteTitle(`Visit note ${new Date().toLocaleDateString()}`);
+      }
     } catch {
       setError("Visit Assistant could not process the transcript.");
     } finally {
@@ -353,20 +340,25 @@ export default function VisitAssistantPage() {
     }
   }
 
-  async function handleSchedule() {
-    if (!note) {
+  async function handleSaveNote() {
+    if (!note || !conversationSummary.trim() || !noteTitle.trim()) {
       return;
     }
 
     setError("");
-    setIsScheduling(true);
+    setIsSavingNote(true);
     try {
-      const response = await scheduleVisitAppointment(note, form);
-      setScheduleResult(response);
+      const response = await saveVisitNote({
+        title: noteTitle.trim(),
+        transcript: visitTranscript.trim(),
+        summary: conversationSummary.trim(),
+        structured_note: note,
+      });
+      setSavedNoteId(response.id);
     } catch {
-      setError("Scheduling could not be completed.");
+      setError("Saving the visit note failed.");
     } finally {
-      setIsScheduling(false);
+      setIsSavingNote(false);
     }
   }
 
@@ -486,7 +478,7 @@ export default function VisitAssistantPage() {
                 <div className="space-y-2">
                   <CardTitle className="text-3xl font-semibold tracking-[-0.04em]">Transcript to visit summary, separate from the chat system.</CardTitle>
                   <CardDescription className="max-w-2xl text-sm leading-6 text-slate-600">
-                    Record or paste a visit transcript, generate a structured note, and hand the result to the scheduling flow through `/visit/*` only.
+                    Record or paste a visit transcript, generate a structured note, and save a polished post-appointment note to your account.
                   </CardDescription>
                 </div>
               </CardHeader>
@@ -522,36 +514,33 @@ export default function VisitAssistantPage() {
 
             <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.96),rgba(30,41,59,0.96))] text-white shadow-[0_40px_100px_rgba(15,23,42,0.26)]">
               <CardHeader>
-                <CardTitle className="text-2xl tracking-[-0.03em]">Scheduling handoff</CardTitle>
+                <CardTitle className="text-2xl tracking-[-0.03em]">Save visit note</CardTitle>
                 <CardDescription className="text-slate-300">
-                  Send the extracted note plus patient details to the VAPI scheduling flow.
+                  Name this note, then store the AI summary and structured extraction under your user record.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <label className="block space-y-2">
-                  <span className="text-sm font-medium text-slate-200">Full name</span>
-                  <input value={form.full_name} onChange={(event) => setForm((current) => ({ ...current, full_name: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 text-sm text-white outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-500/20" placeholder="Jane Doe" />
+                  <span className="text-sm font-medium text-slate-200">Note title</span>
+                  <input
+                    value={noteTitle}
+                    onChange={(event) => setNoteTitle(event.target.value)}
+                    className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 text-sm text-white outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-500/20"
+                    placeholder="Annual checkup follow-up"
+                  />
                 </label>
-                <label className="block space-y-2">
-                  <span className="text-sm font-medium text-slate-200">Phone number</span>
-                  <input value={form.phone_number} onChange={(event) => setForm((current) => ({ ...current, phone_number: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 text-sm text-white outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-500/20" placeholder="5551234567" />
-                </label>
-                <label className="block space-y-2">
-                  <span className="text-sm font-medium text-slate-200">Location</span>
-                  <input value={form.location} onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 text-sm text-white outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-500/20" placeholder="Boston, MA" />
-                </label>
-                <div className="rounded-[24px] border border-slate-700 bg-white/5 px-4 py-3 text-sm text-slate-300">{scheduleHint}</div>
-                <Button type="button" size="lg" onClick={handleSchedule} disabled={!canSchedule} className="w-full bg-white text-slate-950 hover:bg-slate-100">
-                  {isScheduling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PhoneCall className="mr-2 h-4 w-4" />}
-                  Schedule appointment
+                <div className="rounded-[24px] border border-slate-700 bg-white/5 px-4 py-3 text-sm text-slate-300">{saveHint}</div>
+                <Button type="button" size="lg" onClick={handleSaveNote} disabled={!canSaveNote} className="w-full bg-white text-slate-950 hover:bg-slate-100">
+                  {isSavingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FilePlus2 className="mr-2 h-4 w-4" />}
+                  Save note
                 </Button>
-                {scheduleResult ? (
+                {savedNoteId ? (
                   <div className="rounded-[24px] border border-emerald-400/25 bg-emerald-400/10 px-4 py-4 text-sm text-emerald-50">
-                    <p className="font-medium">{scheduleResult.message}</p>
-                    <p className="mt-1 text-emerald-100/80">
-                      Status: {scheduleResult.status}
-                      {scheduleResult.external_call_id ? ` • Call ID: ${scheduleResult.external_call_id}` : ""}
-                    </p>
+                    <p className="flex items-center gap-2 font-medium"><CheckCircle2 className="h-4 w-4" /> Note saved</p>
+                    <p className="mt-1 text-emerald-100/80">This visit note is now stored in your account.</p>
+                    <Link href="/records" className="mt-3 inline-flex text-sm font-medium text-white underline underline-offset-4">
+                      Open saved notes
+                    </Link>
                   </div>
                 ) : null}
               </CardContent>

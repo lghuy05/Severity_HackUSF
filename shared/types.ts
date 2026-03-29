@@ -248,6 +248,16 @@ export type VisitAssistantUserProfile = {
   gender?: string | null;
 };
 
+export type VisitSavedNote = {
+  id: string;
+  title: string;
+  transcript: string;
+  summary: string;
+  structured_note: VisitStructuredNote;
+  created_at: string;
+  updated_at: string;
+};
+
 export type VisitScheduleResponse = {
   status: VisitScheduleStatus;
   provider: string;

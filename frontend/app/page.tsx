@@ -10,7 +10,7 @@ import { EmergencyOverlay } from "@/components/EmergencyOverlay";
 import { InputBar } from "@/components/InputBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { streamChatTurn } from "@/lib/api";
+import { streamChatTurn, translateVisitTurn } from "@/lib/api";
 import { getUiCopy, speechLocaleFor, type UiLanguage } from "@/lib/i18n";
 import { clearLatestAnalysis, clearLatestContext, saveLatestAnalysis, saveLatestContext } from "@/lib/latest-analysis";
 import { clearChatState, DEFAULT_PROFILE, loadChatState, loadUserProfile, saveChatState, saveUserProfile } from "@/lib/session-store";
@@ -100,7 +100,9 @@ export default function Page() {
   const [voiceAvailable, setVoiceAvailable] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [showEmergencyOverlay, setShowEmergencyOverlay] = useState(false);
+  const [isTranslatingChat, setIsTranslatingChat] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const languageRef = useRef<UiLanguage>("en");
 
   const copy = useMemo(() => getUiCopy(language), [language]);
   const showCarePanel = Boolean(analysis && (uiBlocks.includes("care_options") || analysis.navigation.hospitals.length > 0));
@@ -120,12 +122,53 @@ export default function Page() {
   }
 
   function handleLanguageChange(nextLanguage: UiLanguage) {
+    const previousLanguage = languageRef.current;
     setLanguage(nextLanguage);
+    languageRef.current = nextLanguage;
     setProfile((current) => {
       const nextProfile = { ...current, language: nextLanguage };
       saveUserProfile(nextProfile);
       return nextProfile;
     });
+
+    if (messages.length > 0 && previousLanguage !== nextLanguage) {
+      void translateCurrentChat(previousLanguage, nextLanguage);
+    }
+  }
+
+  async function translateCurrentChat(sourceLanguage: UiLanguage, targetLanguage: UiLanguage) {
+    setIsTranslatingChat(true);
+    try {
+      const translatedMessages = await Promise.all(
+        messages.map(async (message) => {
+          const translated = await translateVisitTurn({
+            text: message.content,
+            source_language: speechLocaleFor(sourceLanguage),
+            target_language: speechLocaleFor(targetLanguage),
+          });
+          return { ...message, content: translated.translated_text };
+        }),
+      );
+      setMessages(translatedMessages);
+
+      if (assistantTurn) {
+        const translatedActions = await Promise.all(
+          assistantTurn.actions.map(async (action) => {
+            const translatedLabel = await translateVisitTurn({
+              text: action.label,
+              source_language: speechLocaleFor(sourceLanguage),
+              target_language: speechLocaleFor(targetLanguage),
+            });
+            return { ...action, label: translatedLabel.translated_text };
+          }),
+        );
+        setAssistantTurn({ ...assistantTurn, actions: translatedActions });
+      }
+    } catch {
+      setMessages((current) => current);
+    } finally {
+      setIsTranslatingChat(false);
+    }
   }
 
   useEffect(() => {
@@ -133,6 +176,7 @@ export default function Page() {
     setProfile(savedProfile);
     if (savedProfile.language) {
       setLanguage(savedProfile.language as UiLanguage);
+      languageRef.current = savedProfile.language as UiLanguage;
     }
 
     const savedChat = loadChatState();
@@ -191,6 +235,7 @@ export default function Page() {
       );
       saveLatestContext({ text: nextMessage, location: nextLocation });
     } else {
+      setAssistantTurn((current) => (current ? { ...current, actions: [] } : current));
       const action = assistantTurn?.actions.find((item) => item.intent === intent);
       const userText = bubbleText || action?.label || intent;
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: userText }]);
@@ -208,6 +253,7 @@ export default function Page() {
           message: intent === "symptoms" ? nextMessage : prompt,
           location: nextLocation,
           preferred_language: language,
+          session,
           profile: {
             ...profile,
             language,
@@ -295,17 +341,6 @@ export default function Page() {
 
   const embeddedMessages = analysis
     ? [
-        assistantTurn?.follow_up && assistantTurn.follow_up.options.length > 0 ? (
-          <div key="follow-up" className="space-y-3 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_rgba(148,163,184,0.10)]">
-            <div className="flex flex-wrap gap-3">
-              {assistantTurn.follow_up.options.map((option) => (
-                <Button key={option} variant="secondary" onClick={() => void runIntent("symptoms", option, option)}>
-                  {option}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : null,
         uiBlocks.includes("emergency") ? (
           <div key="emergency" className="rounded-[32px] border border-rose-200 bg-rose-50/90 p-6 text-rose-800 shadow-[0_22px_60px_rgba(244,63,94,0.08)]">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-rose-600">
@@ -397,6 +432,7 @@ export default function Page() {
 
                 <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
                   {profile.location ? <span>{copy.locationUsing(profile.location)}</span> : null}
+                  {isTranslatingChat ? <span>Translating current chat...</span> : null}
                   <span className="inline-flex items-center gap-2">
                     <Mic className="h-4 w-4 text-slate-400" />
                     {voiceAvailable ? copy.voiceReady : copy.voiceUnavailable}
@@ -432,7 +468,7 @@ export default function Page() {
 
         <div className="mt-10 flex justify-center">
           <Button asChild variant="ghost" className="text-slate-500">
-            <Link href="/debug">{copy.systemView}</Link>
+            <Link href="/agent-graph">{copy.systemView}</Link>
           </Button>
         </div>
       </div>

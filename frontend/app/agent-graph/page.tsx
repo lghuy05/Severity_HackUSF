@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { loadLatestAnalysis, loadLatestContext, type LatestContext } from "@/lib/latest-analysis";
 import type { AnalyzeResponse } from "@shared/types";
 
-export default function DebugPage() {
+export default function AgentGraphPage() {
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
   const [context, setContext] = useState<LatestContext | null>(null);
 
@@ -18,8 +18,8 @@ export default function DebugPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#f1f5f9_100%)]">
-      <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_100%)]">
+      <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
         {analysis ? (
           <AgentGraphPanel steps={analysis.agent_flow} analysis={analysis} context={context} visible />
         ) : (

@@ -46,6 +46,27 @@ class VisitTranslateTurnResponse(BaseModel):
     target_language: str
 
 
+class VisitSavedNote(BaseModel):
+    id: str
+    title: str
+    transcript: str
+    summary: str
+    structured_note: VisitStructuredNote
+    created_at: str
+    updated_at: str
+
+
+class VisitSaveNoteRequest(BaseModel):
+    title: str = Field(min_length=1)
+    transcript: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    structured_note: VisitStructuredNote
+
+
+class VisitNotesResponse(BaseModel):
+    notes: list[VisitSavedNote] = Field(default_factory=list)
+
+
 class VisitUserProfile(BaseModel):
     full_name: str = ""
     phone_number: str = ""

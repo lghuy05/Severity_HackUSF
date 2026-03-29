@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ActivitySquare, CalendarHeart, Home, UserRound, Workflow } from "lucide-react";
+import { ActivitySquare, BookText, CalendarHeart, Home, UserRound, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const MENU_ITEMS = [
   { href: "/", label: "Home", icon: Home },
   { href: "/visit-assistant", label: "Visit assistant", icon: CalendarHeart },
+  { href: "/records", label: "Notes", icon: BookText },
+  { href: "/agent-graph", label: "Agent Graph", icon: Workflow },
   { href: "/profile", label: "Profile", icon: UserRound },
-  { href: "/debug", label: "System view", icon: Workflow },
 ];
 
 export function AppMenu() {

@@ -8,6 +8,7 @@ import type {
   UserProfile,
   VisitAssistantUserProfile,
   VisitExtractNoteResponse,
+  VisitSavedNote,
   VisitScheduleResponse,
   VisitStructuredNote,
   VisitSummarizeResponse,
@@ -103,6 +104,7 @@ export async function streamChatTurn(
     message?: string;
     location: string;
     preferred_language?: string;
+    session?: ChatSessionState | null;
     profile?: UserProfile | null;
   },
   onChunk: (chunk: ChatStreamChunk) => void,
@@ -270,4 +272,32 @@ export async function updateUserProfile(patch: ProfilePatch): Promise<UserProfil
   const profile = { ...DEFAULT_PROFILE, ...(await response.json() as UserProfile) };
   saveUserProfile(profile);
   return profile;
+}
+
+export async function listVisitNotes(): Promise<VisitSavedNote[]> {
+  const response = await apiFetch("/visit/notes");
+  if (!response.ok) {
+    throw new Error("Fetch visit notes failed");
+  }
+
+  const payload = await response.json() as { notes: VisitSavedNote[] };
+  return payload.notes;
+}
+
+export async function saveVisitNote(payload: {
+  title: string;
+  transcript: string;
+  summary: string;
+  structured_note: VisitStructuredNote;
+}): Promise<VisitSavedNote> {
+  const response = await apiFetch("/visit/notes", {
+    method: "POST",
+    includeProfileInBody: true,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error("Save visit note failed");
+  }
+
+  return response.json();
 }

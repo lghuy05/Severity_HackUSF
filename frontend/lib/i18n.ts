@@ -135,7 +135,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     urgentBody: "These symptoms may need urgent medical attention. If they are worsening or you feel unsafe, call 911 now or go to the nearest emergency department.",
     viewEmergencyInstructions: "View emergency instructions",
     callEmergency: "Call 911",
-    systemView: "System view",
+    systemView: "Agent Graph",
     emergencyInstructions: ["Call 911 immediately.", "Do not drive yourself.", "Stay with someone if possible."],
   },
   es: {
@@ -193,7 +193,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     urgentBody: "Estos síntomas pueden necesitar atención médica urgente. Si empeoran o te sientes en peligro, llama al 911 ahora o ve al servicio de urgencias más cercano.",
     viewEmergencyInstructions: "Ver instrucciones de emergencia",
     callEmergency: "Llamar al 911",
-    systemView: "Vista del sistema",
+    systemView: "Agent Graph",
     emergencyInstructions: ["Llama al 911 de inmediato.", "No conduzcas por tu cuenta.", "Permanece con alguien si es posible."],
   },
   fr: {
@@ -251,7 +251,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     urgentBody: "Ces symptômes peuvent nécessiter une prise en charge urgente. S'ils s'aggravent ou si vous vous sentez en danger, appelez le 911 ou rendez-vous aux urgences les plus proches.",
     viewEmergencyInstructions: "Voir les consignes d'urgence",
     callEmergency: "Appeler le 911",
-    systemView: "Vue système",
+    systemView: "Agent Graph",
     emergencyInstructions: ["Appelez immédiatement le 911.", "Ne conduisez pas vous-même.", "Restez avec quelqu'un si possible."],
   },
   pt: {
@@ -309,7 +309,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     urgentBody: "Esses sintomas podem precisar de atendimento médico urgente. Se estiverem piorando ou você se sentir em perigo, ligue para o 911 agora ou vá ao pronto-socorro mais próximo.",
     viewEmergencyInstructions: "Ver instruções de emergência",
     callEmergency: "Ligar para 911",
-    systemView: "Visão do sistema",
+    systemView: "Agent Graph",
     emergencyInstructions: ["Ligue para o 911 imediatamente.", "Não dirija por conta própria.", "Fique com alguém, se possível."],
   },
   vi: {
@@ -367,7 +367,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     urgentBody: "Những triệu chứng này có thể cần chăm sóc y tế khẩn cấp. Nếu đang nặng hơn hoặc bạn cảm thấy không an toàn, hãy gọi 911 ngay hoặc đến khoa cấp cứu gần nhất.",
     viewEmergencyInstructions: "Xem hướng dẫn khẩn cấp",
     callEmergency: "Gọi 911",
-    systemView: "Chế độ hệ thống",
+    systemView: "Agent Graph",
     emergencyInstructions: ["Gọi 911 ngay lập tức.", "Không tự lái xe.", "Nếu có thể, hãy ở cùng một người khác."],
   },
   zh: {
@@ -425,7 +425,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
     urgentBody: "这些症状可能需要紧急医疗处理。如果症状加重或你感觉不安全，请立即拨打 911 或前往最近的急诊室。",
     viewEmergencyInstructions: "查看紧急指引",
     callEmergency: "拨打 911",
-    systemView: "系统视图",
+    systemView: "Agent Graph",
     emergencyInstructions: ["请立即拨打 911。", "不要自行驾车。", "如果可以，请与他人待在一起。"],
   },
 };
