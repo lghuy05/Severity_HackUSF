@@ -1,60 +1,81 @@
-"use client";
+import { CheckCircle2, CircleDashed, Wrench } from "lucide-react";
 
-import type { AgentStep } from "../../shared/types";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import type { AgentStep } from "@shared/types";
 
 type AgentFlowPanelProps = {
   steps: AgentStep[];
   visible: boolean;
 };
 
+function statusVariant(status: AgentStep["status"]) {
+  if (status === "done") {
+    return "safe" as const;
+  }
+  if (status === "running") {
+    return "default" as const;
+  }
+  return "warning" as const;
+}
+
 export function AgentFlowPanel({ steps, visible }: AgentFlowPanelProps) {
+  if (!visible || !steps.length) {
+    return null;
+  }
+
   return (
-    <aside
-      className={[
-        "fixed right-4 top-4 z-30 w-[min(320px,calc(100vw-2rem))] rounded-[28px] border border-white/12 bg-white/8 p-4 shadow-panel backdrop-blur-2xl transition-all duration-500 md:right-8 md:top-8",
-        visible ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-4 opacity-0",
-      ].join(" ")}
-    >
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Agent Flow</p>
-          <h2 className="mt-1 text-base font-semibold text-white">Live reasoning</h2>
-        </div>
-        <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-[11px] font-medium text-slate-300">
-          Active
-        </span>
+    <div className="space-y-6">
+      <div>
+        <p className="text-xs uppercase tracking-[0.24em] text-slate-400">System flow</p>
+        <h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em] text-slate-950">Agent execution</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          This view is for demos and judges. It shows the backend agent sequence, each step summary, and the tools used.
+        </p>
       </div>
 
-      <div className="mt-4 space-y-2.5">
-        {steps.map((step) => (
-          <div
-            key={step.key}
-            className={[
-              "flex items-start gap-3 rounded-2xl border p-3 transition-all duration-300",
-              step.status === "running"
-                ? "border-sky-400/30 bg-sky-400/12 shadow-[0_0_30px_rgba(56,189,248,0.15)]"
-                : step.status === "done"
-                  ? "border-emerald-400/20 bg-emerald-400/8"
-                  : "border-white/8 bg-white/[0.03]",
-            ].join(" ")}
-          >
-            <div
-              className={[
-                "mt-0.5 h-3 w-3 rounded-full transition-all duration-300",
-                step.status === "done" ? "bg-emerald-300 shadow-[0_0_16px_rgba(110,231,183,0.65)]" : "",
-                step.status === "running" ? "animate-agent-pulse bg-sky-300 shadow-[0_0_22px_rgba(125,211,252,0.8)]" : "",
-                step.status === "idle" ? "bg-slate-600" : "",
-              ].join(" ")}
-            />
-            <div>
-              <p className="font-medium text-white">{step.label}</p>
-              <p className="text-sm text-slate-400">
-                {step.detail ?? (step.status === "idle" ? "Waiting" : step.status === "running" ? "Processing" : "Completed")}
-              </p>
+      <div className="relative ml-3 space-y-5 before:absolute before:bottom-4 before:left-[15px] before:top-4 before:w-px before:bg-slate-200">
+        {steps.map((step) => {
+          const done = step.status === "done";
+          return (
+            <div key={step.agent} className="relative pl-12">
+              <div
+                className={cn(
+                  "absolute left-0 top-7 flex h-8 w-8 items-center justify-center rounded-full border bg-white shadow-[0_8px_25px_rgba(148,163,184,0.14)]",
+                  done ? "border-emerald-200 text-emerald-600" : "border-slate-200 text-slate-400",
+                )}
+              >
+                {done ? <CheckCircle2 className="h-4.5 w-4.5" /> : <CircleDashed className="h-4.5 w-4.5" />}
+              </div>
+
+              <Card className="p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">{step.label}</p>
+                    <p className="mt-2 text-sm leading-7 text-slate-600">{step.summary}</p>
+                  </div>
+                  <Badge variant={statusVariant(step.status)}>{step.status}</Badge>
+                </div>
+
+                {step.tools.length ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {step.tools.map((tool) => (
+                      <span
+                        key={`${step.agent}-${tool}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] uppercase tracking-[0.12em] text-slate-500"
+                      >
+                        <Wrench className="h-3 w-3" />
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </Card>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </aside>
+    </div>
   );
 }

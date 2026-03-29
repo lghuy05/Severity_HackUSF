@@ -1,47 +1,76 @@
 # Severity
 
-Demo-ready MVP for an AI multi-agent healthcare navigator with a Next.js frontend and FastAPI backend.
+Health Equity Bridge is a local multi-agent healthcare navigator built with:
 
-## Structure
+- `frontend/`: Next.js App Router UI
+- `backend/`: FastAPI API surface
+- `specialized/`: specialized healthcare agents
+- `tools/`: Gemini, Google Places, and formatter integrations
+- `a2a/`: local A2A-style handoff router
+- `core/`: shared agent runtime, tracing, and response assembly
+- `shared/`: TypeScript and Python schema bridge
 
-- `frontend/`: Next.js App Router UI with chat, voice input, map, and agent flow panel
-- `backend/`: FastAPI API and orchestrator
-- `agents/`: Google ADK-style multi-agent package with A2A routing
-- `shared/`: Shared schemas and TypeScript types
-- `docs/`: Architecture notes and demo script
+## Authoritative Runtime
+
+The authoritative runtime path is:
+
+`frontend -> backend/main.py -> backend/orchestrator.py -> a2a/router.py -> specialized/* -> tools/*`
+
+The `agents/` package is retained as a compatibility surface and ADK configuration layer. It is no longer the primary place where orchestration logic lives.
 
 ## Run
 
 ### Backend
 
 ```bash
-cd backend
+cd /home/yui/Work/hackathon/Severity/backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+cd /home/yui/Work/hackathon/Severity
+backend/.venv/bin/python -m uvicorn backend.main:app --reload --port 8000
 ```
 
-Set `GEMINI_API_KEY=your_key` before starting the backend.
+Required environment:
+
+```env
+GEMINI_API_KEY=...
+GOOGLE_MAPS_API_KEY=...
+```
+
+Optional:
+
+```env
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TEMPERATURE=0.2
+```
 
 ### Frontend
 
 ```bash
-cd frontend
+cd /home/yui/Work/hackathon/Severity/frontend
 npm install
 npm run dev
 ```
 
-Set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` in `frontend/.env.local`.
+Set:
 
-Optional:
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
 
-- Set `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` to render the Google Map script instead of the placeholder map panel.
+### Direct Root-Agent Smoke Test
 
-## Demo Flow
+```bash
+cd /home/yui/Work/hackathon/Severity
+agents/.venv/bin/python test_rootagent.py
+```
 
-1. Enter or dictate a symptom like `I feel chest pain and dizzy`.
-2. Frontend sends `/analyze` request with text and location.
-3. Backend orchestrator runs the ADK root agent, which routes A2A-style messages across language, triage, navigation, emergency, summary, and communication agents.
-4. UI updates the agent flow panel in real time.
-5. Emergency mode appears automatically for high-risk cases.
+## Current Flow
+
+1. Frontend submits text plus location to `POST /analyze`.
+2. FastAPI validates the request and calls the orchestrator.
+3. The orchestrator delegates through:
+   `language_agent -> triage_agent -> emergency_agent? -> navigation_agent -> cost_agent -> contact_agent`
+4. Agents enrich a shared `AgentMessage` state object.
+5. Backend returns structured outputs plus a request trace for frontend visualization.
