@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.0
 pydantic==2.12.5
 python-multipart==0.0.20
 google-adk
+firebase-admin>=6.7.0,<7

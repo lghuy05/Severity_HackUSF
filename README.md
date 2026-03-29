@@ -43,7 +43,18 @@ Optional:
 ```env
 GEMINI_MODEL=gemini-2.5-flash
 GEMINI_TEMPERATURE=0.2
+FIREBASE_PROJECT_ID=severity-63caf
+FIREBASE_SERVICE_ACCOUNT_PATH=/abs/path/to/firebase-service-account.json
+# or
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 ```
+
+Firebase backend notes:
+
+- Frontend Firebase uses `NEXT_PUBLIC_FIREBASE_*` env vars.
+- Backend Firebase uses the Admin SDK in [backend/firebase.py](/home/yui/Work/hackathon/Severity/backend/firebase.py).
+- The backend is considered ready when `GET /health` returns `"firebase_ready": true`.
+- For backend Firestore/Auth work, provide service-account credentials through `FIREBASE_SERVICE_ACCOUNT_PATH`, `FIREBASE_SERVICE_ACCOUNT_JSON`, or `GOOGLE_APPLICATION_CREDENTIALS`.
 
 ### Frontend
 

@@ -1,4 +1,18 @@
-import type { AnalyzeResponse, ChatIntent, ChatSessionState, ChatStreamChunk, ChatTurnResponse, SummaryOutput, UserProfile } from "../../shared/types";
+import type {
+  AnalyzeResponse,
+  ChatIntent,
+  ChatSessionState,
+  ChatStreamChunk,
+  ChatTurnResponse,
+  SummaryOutput,
+  UserProfile,
+  VisitAssistantUserProfile,
+  VisitExtractNoteResponse,
+  VisitScheduleResponse,
+  VisitStructuredNote,
+  VisitSummarizeResponse,
+  VisitTranslateTurnResponse,
+} from "../../shared/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -107,5 +121,68 @@ export async function getChatSession(sessionId: string): Promise<ChatSessionStat
   if (!response.ok) {
     throw new Error("Fetch chat session failed");
   }
+  return response.json();
+}
+
+export async function extractVisitNote(transcript: string): Promise<VisitExtractNoteResponse> {
+  const response = await fetch(`${API_BASE_URL}/visit/extract-note`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Visit note extraction failed");
+  }
+
+  return response.json();
+}
+
+export async function summarizeVisitConversation(transcript: string): Promise<VisitSummarizeResponse> {
+  const response = await fetch(`${API_BASE_URL}/visit/summarize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Visit summary generation failed");
+  }
+
+  return response.json();
+}
+
+export async function translateVisitTurn(payload: {
+  text: string;
+  source_language: string;
+  target_language: string;
+}): Promise<VisitTranslateTurnResponse> {
+  const response = await fetch(`${API_BASE_URL}/visit/translate-turn`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error("Visit translation failed");
+  }
+
+  return response.json();
+}
+
+export async function scheduleVisitAppointment(
+  note: VisitStructuredNote,
+  userProfile: VisitAssistantUserProfile,
+): Promise<VisitScheduleResponse> {
+  const response = await fetch(`${API_BASE_URL}/visit/schedule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note, user_profile: userProfile }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Visit scheduling failed");
+  }
+
   return response.json();
 }

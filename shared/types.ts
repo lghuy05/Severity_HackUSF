@@ -211,3 +211,47 @@ export type AgentStep = {
   summary: string;
   tools: string[];
 };
+
+export type VisitSeverity = "low" | "medium" | "high" | "unknown";
+export type VisitScheduleStatus = "scheduled" | "queued" | "failed";
+
+export type VisitStructuredNote = {
+  summary: string;
+  symptoms: string[];
+  severity: VisitSeverity;
+  timeline: string;
+  action_items: string[];
+};
+
+export type VisitExtractNoteResponse = {
+  note: VisitStructuredNote;
+};
+
+export type VisitSummarizeResponse = {
+  summary: string;
+};
+
+export type VisitTranslateTurnResponse = {
+  source_text: string;
+  translated_text: string;
+  source_language: string;
+  target_language: string;
+};
+
+export type VisitAssistantUserProfile = {
+  full_name: string;
+  phone_number: string;
+  language: string;
+  location: string;
+  age?: number | null;
+  gender?: string | null;
+};
+
+export type VisitScheduleResponse = {
+  status: VisitScheduleStatus;
+  provider: string;
+  message: string;
+  external_call_id?: string | null;
+  request_payload: Record<string, unknown>;
+  raw_response: Record<string, unknown>;
+};

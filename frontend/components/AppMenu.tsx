@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ActivitySquare, Home, UserRound, Workflow } from "lucide-react";
+import { ActivitySquare, CalendarHeart, Home, UserRound, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const MENU_ITEMS = [
   { href: "/", label: "Home", icon: Home },
+  { href: "/visit-assistant", label: "Visit assistant", icon: CalendarHeart },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/debug", label: "System view", icon: Workflow },
 ];
