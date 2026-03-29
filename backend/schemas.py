@@ -13,6 +13,7 @@ SemanticSeverity = Literal["mild", "moderate", "severe", "unknown"]
 
 
 class UserProfile(BaseModel):
+    name: str = "User"
     language: str = "en"
     location: str = ""
     age: int | None = None

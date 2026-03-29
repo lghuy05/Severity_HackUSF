@@ -1,30 +1,60 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, ShieldCheck, UserRound } from "lucide-react";
+import { Loader2, Save, ShieldCheck, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { DEFAULT_PROFILE, loadUserProfile, saveUserProfile } from "@/lib/session-store";
+import { getUserProfile, updateUserProfile } from "@/lib/api";
+import { DEFAULT_PROFILE, loadUserProfile } from "@/lib/session-store";
 import type { UserProfile } from "@shared/types";
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     setProfile(loadUserProfile());
+
+    async function loadProfile() {
+      try {
+        const nextProfile = await getUserProfile();
+        setProfile(nextProfile);
+        setSaved(true);
+        setError("");
+      } catch {
+        setError("Profile service is unavailable. Showing the locally cached profile.");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    void loadProfile();
   }, []);
 
   function updateField<K extends keyof UserProfile>(key: K, value: UserProfile[K]) {
     setSaved(false);
+    setError("");
     setProfile((current) => ({ ...current, [key]: value }));
   }
 
-  function save() {
-    saveUserProfile(profile);
-    setSaved(true);
+  async function save() {
+    setIsSaving(true);
+    try {
+      const nextProfile = await updateUserProfile(profile);
+      setProfile(nextProfile);
+      setSaved(true);
+      setError("");
+    } catch {
+      setError("Unable to save your profile right now.");
+      setSaved(false);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -34,7 +64,7 @@ export default function ProfilePage() {
         <div className="mt-5 max-w-2xl">
           <h1 className="text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">Personal settings</h1>
           <p className="mt-4 text-base leading-8 text-slate-600">
-            These details are stored locally and automatically used for future conversations.
+            These details are stored to your user profile and cached locally for faster future conversations.
           </p>
         </div>
 
@@ -49,10 +79,19 @@ export default function ProfilePage() {
                   </CardTitle>
                   <CardDescription className="mt-2">Language and location are applied automatically to every new request.</CardDescription>
                 </div>
-                <Badge variant={saved ? "safe" : "default"}>{saved ? "Saved" : "Editing"}</Badge>
+                <Badge variant={saved ? "safe" : "default"}>{isLoading ? "Loading" : saved ? "Saved" : "Editing"}</Badge>
               </div>
             </CardHeader>
             <CardContent className="grid gap-4 pt-6 sm:grid-cols-2">
+              <label className="block sm:col-span-2">
+                <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-500">Name</span>
+                <input
+                  value={profile.name}
+                  onChange={(event) => updateField("name", event.target.value)}
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-900 outline-none"
+                />
+              </label>
+
               <label className="block">
                 <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-500">Preferred language</span>
                 <select
@@ -103,10 +142,11 @@ export default function ProfilePage() {
               </label>
 
               <div className="sm:col-span-2">
-                <Button onClick={save} className="gap-2">
-                  <Save className="h-4 w-4" />
-                  Save profile
+                <Button onClick={() => void save()} className="gap-2" disabled={isLoading || isSaving}>
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {isSaving ? "Saving..." : "Save profile"}
                 </Button>
+                {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
               </div>
             </CardContent>
           </Card>
@@ -120,6 +160,7 @@ export default function ProfilePage() {
               <CardDescription className="mt-2">This profile is applied automatically before the assistant decides what to ask or do next.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 pt-6 text-sm leading-7 text-slate-600">
+              <p><span className="text-slate-400">Name:</span> {profile.name || "User"}</p>
               <p><span className="text-slate-400">Language:</span> {profile.language || "en"}</p>
               <p><span className="text-slate-400">Location:</span> {profile.location || "Not set"}</p>
               <p><span className="text-slate-400">Age:</span> {profile.age ?? "Not set"}</p>
