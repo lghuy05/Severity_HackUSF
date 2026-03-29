@@ -8,3 +8,4 @@ dist/
 *.pyc
 frontend/.env.local
 **/.env
+.env
