@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -22,100 +23,7 @@ VAPI_TO_NUMBER = os.environ.get("VAPI_TO_NUMBER", "")
 VAPI_BASE_URL = "https://api.vapi.ai"
 
 
-def _build_dynamic_system_prompt(patient_name: str, reason_for_visit: str, hospital_name: str, time_slots: list) -> str:
-    """
-    Build a dynamic system prompt for the Vapi assistant based on the time slots.
-    Instructs the assistant to offer slots one by one and stop when one is confirmed.
-    """
-    slots_text = ""
-    for i, slot in enumerate(time_slots, 1):
-        slot_date = slot.get("date", "")
-        slot_time = slot.get("time", "")
-        slot_str = f"{slot_time} on {slot_date}" if slot_date else slot_time
-        
-        if i == 1:
-            slots_text += f"1. First choice: {slot_str}\n"
-        elif i == 2:
-            slots_text += f"2. Second choice: {slot_str}\n"
-        elif i == 3:
-            slots_text += f"3. Third choice: {slot_str}\n"
-    
-    num_slots = len(time_slots)
-    
-    if num_slots == 1:
-        single_slot = time_slots[0]
-        slot_date = single_slot.get("date", "")
-        slot_time = single_slot.get("time", "")
-        slot_str = f"{slot_time} on {slot_date}" if slot_date else slot_time
-        
-        prompt = f"""You are a professional healthcare assistant calling to schedule a medical appointment.
 
-**Patient Information:**
-- Patient Name: {patient_name}
-- Reason for Visit: {reason_for_visit}
-- Hospital: {hospital_name}
-
-**APPOINTMENT TIME:**
-{slot_str}
-
-**Your task:**
-1. Greet the receptionist professionally and introduce yourself
-2. Explain you're calling on behalf of {patient_name} to schedule an appointment for: {reason_for_visit}
-3. Propose the time slot: {slot_str}
-4. If they confirm, say clearly: "Perfect! The appointment is confirmed for {slot_str}."
-5. Try to gather additional information (but don't force it):
-   - Which doctor will see {patient_name}?
-   - What department or location should they check in at?
-   - Any special instructions (arrive early, bring insurance card, fasting, etc.)?
-6. End the call professionally
-
-**Key instructions:**
-- Be courteous and professional
-- Speak clearly and concisely
-- If they reject this time, say: "Thank you for your time. We will try again later. Have a great day." and end the call
-- Always include the word "confirmed" when the appointment is booked"""
-    else:
-        prompt = f"""You are a professional healthcare assistant calling to schedule a medical appointment.
-
-**Patient Information:**
-- Patient Name: {patient_name}
-- Reason for Visit: {reason_for_visit}
-- Hospital: {hospital_name}
-
-**AVAILABLE TIME SLOTS (in order of preference):**
-{slots_text}
-**Your task:**
-1. Greet the receptionist professionally and introduce yourself
-2. Explain you're calling on behalf of {patient_name} to schedule an appointment for: {reason_for_visit}
-
-3. Offer time slots in order:
-   - Start with your FIRST choice
-   - If rejected, immediately offer your SECOND choice (do not repeat the first one)
-   - If rejected, immediately offer your THIRD choice (do not repeat previous ones)
-   - Do NOT offer multiple slots at the same time - offer one, wait for their response, then offer the next
-
-4. When the receptionist accepts ANY slot:
-   - Confirm the details back: "So we have {patient_name} scheduled for [the accepted slot], is that correct?"
-   - Once they confirm, say clearly: "Perfect! The appointment is confirmed for [slot]."
-   - Try to gather additional information (but don't force it):
-     - Which doctor will see {patient_name}?
-     - What department or location should they check in at?
-     - Any special instructions (arrive early, bring insurance card, fasting, etc.)?
-   - End the call professionally
-
-5. If ALL slots are rejected:
-   - Say: "I understand, thank you so much for your time. We will try again later. Have a great day." and end the call
-   - Do NOT try to reschedule on your own
-
-**Key instructions:**
-- Be natural, professional, and conversational
-- Never repeat a slot that was already rejected
-- Only offer one slot at a time - wait for their response before offering the next
-- As soon as any slot is accepted/confirmed, stop offering more slots
-- Always include the word "confirmed" when the appointment is booked
-- If all slots are rejected, end gracefully without further negotiation"""
-    
-    return prompt
 
 
 def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
@@ -153,8 +61,14 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
     time_slots = time_slots[:3]
     logger.info(f"Scheduling with {len(time_slots)} time slot(s): {time_slots}")
     
-    # Build dynamic system prompt with the time slots
-    system_prompt = _build_dynamic_system_prompt(patient_name, reason_for_visit, hospital_name, time_slots)
+    # Format time slots as variables for the Vapi assistant
+    slots_list = []
+    for i, slot in enumerate(time_slots, 1):
+        slot_date = slot.get("date", "")
+        slot_time = slot.get("time", "")
+        slots_list.append(f"{i}. {slot_time} on {slot_date}")
+    
+    available_slots = "\n".join(slots_list)
 
     payload = {
         "assistantId": VAPI_ASSISTANT_ID,
@@ -163,13 +77,14 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
             "number": VAPI_TO_NUMBER,
         },
         "assistantOverrides": {
-            "instructions": system_prompt,
             "variableValues": {
                 "patient": {
                     "fullName": patient_name,
                 },
                 "reason_for_visit": reason_for_visit,
                 "hospital_name": hospital_name,
+                "available_slots": available_slots,
+                "num_slots": str(len(time_slots)),
             }
         },
     }
@@ -181,7 +96,7 @@ def make_appointment_call(message: AgentMessage) -> dict[str, Any]:
 
     logger.debug(f"Vapi request - API key present: {bool(VAPI_API_KEY)}, API key length: {len(VAPI_API_KEY)}")
     logger.debug(f"Vapi request - Assistant ID: {VAPI_ASSISTANT_ID}, Phone Number ID: {VAPI_PHONE_NUMBER_ID}")
-    logger.debug(f"Dynamic system prompt: {system_prompt[:200]}...")
+    logger.debug(f"Available slots for call: {available_slots}")
 
     try:
         response = requests.post(f"{VAPI_BASE_URL}/call/phone", json=payload, headers=headers, timeout=30)
@@ -497,65 +412,41 @@ def _extract_appointment_details(transcript: str, patient_name: str, hospital_na
     # Determine which slot was confirmed by checking which slot details appear in transcript
     if is_confirmed and time_slots:
         for slot_idx, slot in enumerate(time_slots):
-            slot_date = str(slot.get("date", "")).lower()
-            slot_time = str(slot.get("time", "")).lower()
+            slot_date = str(slot.get("date", "")).lower().strip()
+            slot_time = str(slot.get("time", "")).lower().strip()
             
-            # Check if this slot's date/time appears in the transcript
-            date_match = slot_date and slot_date in transcript_lower
-            time_match = slot_time and slot_time in transcript_lower
-            
-            if date_match or time_match:
-                details["slot_index"] = slot_idx
-                logger.info(f"Slot {slot_idx} (date={slot_date}, time={slot_time}) was confirmed")
-                break
+            # Check if this slot's date AND time both appear in transcript
+            # This is more reliable than checking individually
+            if slot_date and slot_time:
+                date_match = slot_date in transcript_lower
+                time_match = slot_time in transcript_lower
+                
+                # If both date and time are found, this is likely the confirmed slot
+                if date_match and time_match:
+                    details["slot_index"] = slot_idx
+                    details["date"] = slot.get("date")  # Use the actual slot date, not extracted
+                    details["time"] = slot.get("time")  # Use the actual slot time, not extracted
+                    logger.info(f"Slot {slot_idx} CONFIRMED: {slot_date} at {slot_time}")
+                    break
+            elif slot_date:
+                # If only date is available, match on that
+                if slot_date in transcript_lower:
+                    details["slot_index"] = slot_idx
+                    details["date"] = slot.get("date")
+                    details["time"] = slot.get("time")
+                    logger.info(f"Slot {slot_idx} matched by date: {slot_date}")
+                    break
+            elif slot_time:
+                # If only time is available, match on that
+                if slot_time in transcript_lower:
+                    details["slot_index"] = slot_idx
+                    details["date"] = slot.get("date")
+                    details["time"] = slot.get("time")
+                    logger.info(f"Slot {slot_idx} matched by time: {slot_time}")
+                    break
 
-    # Look for date patterns
-    date_keywords = [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-        "tomorrow",
-        "next week",
-    ]
-    for keyword in date_keywords:
-        if keyword in transcript_lower:
-            details["date"] = keyword
-            break
-
-    # Look for time patterns like "10am", "2:30pm", "3 o'clock"
-    import re
-
-    time_pattern = r"\b([0-9]{1,2}):?([0-9]{2})?\s*(am|pm|AM|PM)?\b"
-    time_match = re.search(time_pattern, transcript)
-    if time_match:
-        details["time"] = time_match.group(0)
-
-    # Look for doctor name (simple heuristic: "Dr. ..." or "Doctor ...")
-    doctor_pattern = r"(?:Dr\.|Doctor)\s+([A-Z][a-z]+)"
-    doctor_match = re.search(doctor_pattern, transcript)
-    if doctor_match:
-        details["doctor"] = doctor_match.group(1)
-
-    # Look for location/department keywords
-    location_keywords = ["emergency", "pediatrics", "cardiology", "orthopedics", "urgent care", "clinic"]
-    for keyword in location_keywords:
-        if keyword in transcript_lower:
-            details["location"] = keyword
-            break
-
-    # Look for special instructions
-    instruction_keywords = ["bring", "fasting", "arrive early", "insurance", "paperwork"]
-    instructions = []
-    for keyword in instruction_keywords:
-        if keyword in transcript_lower:
-            instructions.append(f"Please {keyword} as mentioned during call")
-
-    if instructions:
-        details["instructions"] = " | ".join(instructions)
+    # Don't extract doctor, location, or instructions - focus on date/time only
+    # Set them to None as per requirement
 
     return details
 
