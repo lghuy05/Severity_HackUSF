@@ -5,6 +5,11 @@ import type { AnalyzeResponse, AssistantTurnPayload, ChatMessage, ChatSessionSta
 const CHAT_STATE_KEY = "heb.chat.state";
 const PROFILE_KEY = "heb.user.profile";
 
+function readStorage(key: string) {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+}
+
 export type PersistedChatState = {
   messages: ChatMessage[];
   session: ChatSessionState | null;
@@ -24,18 +29,26 @@ export const DEFAULT_PROFILE: UserProfile = {
 
 export function saveChatState(state: PersistedChatState) {
   if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(CHAT_STATE_KEY, JSON.stringify(state));
+  const serialized = JSON.stringify(state);
+  window.localStorage.setItem(CHAT_STATE_KEY, serialized);
+  window.sessionStorage.setItem(CHAT_STATE_KEY, serialized);
 }
 
 export function loadChatState(): PersistedChatState | null {
   if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage.getItem(CHAT_STATE_KEY);
+  const raw = readStorage(CHAT_STATE_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as PersistedChatState;
   } catch {
     return null;
   }
+}
+
+export function clearChatState() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(CHAT_STATE_KEY);
+  window.sessionStorage.removeItem(CHAT_STATE_KEY);
 }
 
 export function saveUserProfile(profile: UserProfile) {

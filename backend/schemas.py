@@ -39,6 +39,7 @@ class SemanticMeaning(BaseModel):
     resolved_field: Literal["severity", "duration", "breathing", "symptom", "other"] | None = None
     resolved_value: str | None = None
     follow_up_needed: bool = False
+    follow_up_field: Literal["severity", "duration", "breathing", "symptom", "other"] | None = None
     follow_up_question: str | None = None
     follow_up_kind: Literal["yes_no", "multiple_choice", "free_text"] = "free_text"
     follow_up_options: list[str] = Field(default_factory=list)
