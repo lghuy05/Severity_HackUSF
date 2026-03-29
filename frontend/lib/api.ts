@@ -13,13 +13,65 @@ import type {
   VisitSummarizeResponse,
   VisitTranslateTurnResponse,
 } from "../../shared/types";
+import { DEFAULT_PROFILE, getOrCreateUserId, loadUserProfile, saveUserProfile } from "./session-store";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+type RequestOptions = Omit<RequestInit, "headers"> & {
+  headers?: HeadersInit;
+  includeProfileInBody?: boolean;
+  profile?: UserProfile | null;
+};
+
+type ProfilePatch = Partial<UserProfile>;
+
+function withUserHeaders(headers?: HeadersInit): Headers {
+  const nextHeaders = new Headers(headers);
+  nextHeaders.set("x-user-id", getOrCreateUserId());
+  return nextHeaders;
+}
+
+function withOptionalProfileBody(body: unknown, profile?: UserProfile | null): BodyInit | undefined {
+  if (body == null) {
+    return undefined;
+  }
+
+  if (typeof body === "string") {
+    try {
+      return JSON.stringify({
+        ...(JSON.parse(body) as Record<string, unknown>),
+        profile: profile ?? loadUserProfile(),
+      });
+    } catch {
+      return body;
+    }
+  }
+
+  return JSON.stringify({
+    ...(body as Record<string, unknown>),
+    profile: profile ?? loadUserProfile(),
+  });
+}
+
+async function apiFetch(path: string, options: RequestOptions = {}): Promise<Response> {
+  const { includeProfileInBody = false, profile = null, body, headers, ...rest } = options;
+  const nextHeaders = withUserHeaders(headers);
+
+  if (body != null && !nextHeaders.has("Content-Type")) {
+    nextHeaders.set("Content-Type", "application/json");
+  }
+
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...rest,
+    headers: nextHeaders,
+    body: includeProfileInBody ? withOptionalProfileBody(body, profile) : (body as BodyInit | undefined),
+  });
+}
+
 export async function analyzeSymptoms(payload: { text: string; location: string }): Promise<AnalyzeResponse> {
-  const response = await fetch(`${API_BASE_URL}/analyze`, {
+  const response = await apiFetch("/analyze", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    includeProfileInBody: true,
     body: JSON.stringify(payload),
   });
 
@@ -31,9 +83,9 @@ export async function analyzeSymptoms(payload: { text: string; location: string 
 }
 
 export async function communicateSummary(summary: SummaryOutput): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE_URL}/communicate`, {
+  const response = await apiFetch("/communicate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    includeProfileInBody: true,
     body: JSON.stringify({ summary }),
   });
 
@@ -55,9 +107,8 @@ export async function streamChatTurn(
   },
   onChunk: (chunk: ChatStreamChunk) => void,
 ): Promise<ChatTurnResponse> {
-  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+  const response = await apiFetch("/chat/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -117,7 +168,7 @@ export async function streamChatTurn(
 }
 
 export async function getChatSession(sessionId: string): Promise<ChatSessionState> {
-  const response = await fetch(`${API_BASE_URL}/chat/session/${sessionId}`);
+  const response = await apiFetch(`/chat/session/${sessionId}`);
   if (!response.ok) {
     throw new Error("Fetch chat session failed");
   }
@@ -125,9 +176,9 @@ export async function getChatSession(sessionId: string): Promise<ChatSessionStat
 }
 
 export async function extractVisitNote(transcript: string): Promise<VisitExtractNoteResponse> {
-  const response = await fetch(`${API_BASE_URL}/visit/extract-note`, {
+  const response = await apiFetch("/visit/extract-note", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    includeProfileInBody: true,
     body: JSON.stringify({ transcript }),
   });
 
@@ -139,9 +190,9 @@ export async function extractVisitNote(transcript: string): Promise<VisitExtract
 }
 
 export async function summarizeVisitConversation(transcript: string): Promise<VisitSummarizeResponse> {
-  const response = await fetch(`${API_BASE_URL}/visit/summarize`, {
+  const response = await apiFetch("/visit/summarize", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    includeProfileInBody: true,
     body: JSON.stringify({ transcript }),
   });
 
@@ -157,9 +208,9 @@ export async function translateVisitTurn(payload: {
   source_language: string;
   target_language: string;
 }): Promise<VisitTranslateTurnResponse> {
-  const response = await fetch(`${API_BASE_URL}/visit/translate-turn`, {
+  const response = await apiFetch("/visit/translate-turn", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    includeProfileInBody: true,
     body: JSON.stringify(payload),
   });
 
@@ -174,9 +225,18 @@ export async function scheduleVisitAppointment(
   note: VisitStructuredNote,
   userProfile: VisitAssistantUserProfile,
 ): Promise<VisitScheduleResponse> {
-  const response = await fetch(`${API_BASE_URL}/visit/schedule`, {
+  const cachedProfile = loadUserProfile();
+  const response = await apiFetch("/visit/schedule", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    includeProfileInBody: true,
+    profile: {
+      ...DEFAULT_PROFILE,
+      ...cachedProfile,
+      language: userProfile.language || cachedProfile.language,
+      location: userProfile.location || cachedProfile.location,
+      age: userProfile.age ?? cachedProfile.age ?? null,
+      gender: userProfile.gender ?? cachedProfile.gender ?? null,
+    },
     body: JSON.stringify({ note, user_profile: userProfile }),
   });
 
@@ -185,4 +245,29 @@ export async function scheduleVisitAppointment(
   }
 
   return response.json();
+}
+
+export async function getUserProfile(): Promise<UserProfile> {
+  const response = await apiFetch("/user/profile");
+  if (!response.ok) {
+    throw new Error("Fetch user profile failed");
+  }
+
+  const profile = { ...DEFAULT_PROFILE, ...(await response.json() as UserProfile) };
+  saveUserProfile(profile);
+  return profile;
+}
+
+export async function updateUserProfile(patch: ProfilePatch): Promise<UserProfile> {
+  const response = await apiFetch("/user/profile", {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) {
+    throw new Error("Update user profile failed");
+  }
+
+  const profile = { ...DEFAULT_PROFILE, ...(await response.json() as UserProfile) };
+  saveUserProfile(profile);
+  return profile;
 }

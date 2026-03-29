@@ -4,6 +4,7 @@ import type { AnalyzeResponse, AssistantTurnPayload, ChatMessage, ChatSessionSta
 
 const CHAT_STATE_KEY = "heb.chat.state";
 const PROFILE_KEY = "heb.user.profile";
+const USER_ID_KEY = "heb.user.id";
 
 function readStorage(key: string) {
   if (typeof window === "undefined") return null;
@@ -21,6 +22,7 @@ export type PersistedChatState = {
 };
 
 export const DEFAULT_PROFILE: UserProfile = {
+  name: "User",
   language: "en",
   location: "",
   age: null,
@@ -54,15 +56,31 @@ export function clearChatState() {
 export function saveUserProfile(profile: UserProfile) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  window.localStorage.setItem("profile", JSON.stringify(profile));
 }
 
 export function loadUserProfile(): UserProfile {
   if (typeof window === "undefined") return DEFAULT_PROFILE;
-  const raw = window.localStorage.getItem(PROFILE_KEY);
+  const raw = window.localStorage.getItem(PROFILE_KEY) ?? window.localStorage.getItem("profile");
   if (!raw) return DEFAULT_PROFILE;
   try {
     return { ...DEFAULT_PROFILE, ...(JSON.parse(raw) as UserProfile) };
   } catch {
     return DEFAULT_PROFILE;
   }
+}
+
+export function getOrCreateUserId(): string {
+  if (typeof window === "undefined") {
+    return "anonymous-user";
+  }
+
+  const existing = window.localStorage.getItem(USER_ID_KEY);
+  if (existing) {
+    return existing;
+  }
+
+  const nextUserId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `user-${Date.now()}`;
+  window.localStorage.setItem(USER_ID_KEY, nextUserId);
+  return nextUserId;
 }

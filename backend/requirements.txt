@@ -2,5 +2,6 @@ fastapi==0.115.8
 uvicorn[standard]==0.34.0
 pydantic==2.12.5
 python-multipart==0.0.20
+python-dotenv>=1.0.1,<2
 google-adk
 firebase-admin>=6.7.0,<7

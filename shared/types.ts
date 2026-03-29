@@ -3,6 +3,7 @@ export type ChatIntent = "symptoms" | "guidance" | "care" | "cost";
 export type SemanticIntent = "symptom_check" | "guidance" | "seek_care" | "cost" | "emergency" | "unclear";
 export type SemanticSeverity = "mild" | "moderate" | "severe" | "unknown";
 export type UserProfile = {
+  name: string;
   language: string;
   location: string;
   age?: number | null;

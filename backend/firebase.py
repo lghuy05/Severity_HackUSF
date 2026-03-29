@@ -75,9 +75,15 @@ def firebase_backend_ready() -> bool:
 
 def get_firestore_client() -> Any:
     _, _, _, firestore = _load_firebase_admin()
-    return firestore.client(app=get_firebase_app())
+    try:
+        return firestore.client(app=get_firebase_app())
+    except Exception as exc:  # pragma: no cover - external SDK behavior
+        raise FirebaseConfigError(f"Unable to initialize Firestore client: {exc}") from exc
 
 
 def verify_firebase_token(id_token: str) -> dict[str, Any]:
     _, _, auth, _ = _load_firebase_admin()
-    return auth.verify_id_token(id_token, app=get_firebase_app())
+    try:
+        return auth.verify_id_token(id_token, app=get_firebase_app())
+    except Exception as exc:  # pragma: no cover - external SDK behavior
+        raise FirebaseConfigError(f"Unable to verify Firebase token: {exc}") from exc
