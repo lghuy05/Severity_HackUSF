@@ -11,8 +11,10 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from backend.logging_config import configure_logging
+from backend.firebase import firebase_backend_ready
 from backend.orchestrator import get_chat_session, run_analysis, run_chat_turn, run_communication, stream_chat_turn
 from backend.schemas import AnalyzeRequest, AnalyzeResponse, ChatSessionState, ChatTurnRequest, ChatTurnResponse, CommunicationRequest, CommunicationResponse
+from backend.visit_assistant import router as visit_assistant_router
 
 configure_logging()
 
@@ -26,10 +28,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(visit_assistant_router)
+
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "firebase_ready": firebase_backend_ready()}
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
