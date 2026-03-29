@@ -1,9 +1,13 @@
 import type {
   AnalyzeResponse,
+  AppointmentCallResponse,
+  AppointmentReasonSummaryResponse,
+  AppointmentTimeSlot,
   ChatIntent,
   ChatSessionState,
   ChatStreamChunk,
   ChatTurnResponse,
+  SavedAppointment,
   SummaryOutput,
   UserProfile,
   VisitAssistantUserProfile,
@@ -300,4 +304,72 @@ export async function saveVisitNote(payload: {
   }
 
   return response.json();
+}
+
+export async function callHospital(payload: {
+  patient_name: string;
+  reason_for_visit: string;
+  location: string;
+  time_slots: AppointmentTimeSlot[];
+  hospital: {
+    name: string;
+    address: string;
+    lat: number;
+    lng: number;
+    phone: string;
+    open_now: boolean;
+    google_maps_uri?: string | null;
+  };
+}): Promise<AppointmentCallResponse> {
+  const response = await apiFetch("/appointments/call-hospital", {
+    method: "POST",
+    includeProfileInBody: true,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error("Call hospital failed");
+  }
+
+  return response.json();
+}
+
+export async function summarizeAppointmentReason(chat_history: string): Promise<AppointmentReasonSummaryResponse> {
+  const response = await apiFetch("/appointments/summarize-reason", {
+    method: "POST",
+    includeProfileInBody: true,
+    body: JSON.stringify({ chat_history }),
+  });
+  if (!response.ok) {
+    throw new Error("Appointment summarization failed");
+  }
+
+  return response.json();
+}
+
+export async function listAppointments(): Promise<SavedAppointment[]> {
+  const response = await apiFetch("/appointments");
+  if (!response.ok) {
+    throw new Error("Fetch appointments failed");
+  }
+
+  const payload = await response.json() as { appointments: SavedAppointment[] };
+  return payload.appointments;
+}
+
+export async function deleteAppointment(appointmentId: string): Promise<void> {
+  const response = await apiFetch(`/appointments/${appointmentId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error("Delete appointment failed");
+  }
+}
+
+export async function deleteVisitNote(noteId: string): Promise<void> {
+  const response = await apiFetch(`/visit/notes/${noteId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error("Delete visit note failed");
+  }
 }

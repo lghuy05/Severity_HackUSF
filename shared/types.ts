@@ -80,6 +80,56 @@ export type CostOption = {
   source?: string | null;
 };
 
+export type AppointmentDetails = {
+  patient_name?: string | null;
+  hospital?: string | null;
+  date?: string | null;
+  time?: string | null;
+  doctor?: string | null;
+  location?: string | null;
+  instructions?: string | null;
+  slot_index?: number | null;
+  confirmed: boolean;
+};
+
+export type AppointmentCallResponse = {
+  status: string;
+  call_id: string;
+  appointment?: AppointmentDetails | null;
+  slots_tried: Array<{ date: string; time: string }>;
+  transcript: string;
+  recording_url: string;
+  error?: string | null;
+};
+
+export type AppointmentCallStage = "idle" | "preparing" | "calling";
+
+export type AppointmentReasonSummaryResponse = {
+  summary: string;
+};
+
+export type AppointmentTimeSlot = {
+  date: string;
+  time: string;
+};
+
+export type SavedAppointment = {
+  id: string;
+  user_id?: string | null;
+  patient_name: string;
+  hospital?: string | null;
+  date?: string | null;
+  time?: string | null;
+  doctor?: string | null;
+  location?: string | null;
+  instructions?: string | null;
+  reason_for_visit: string;
+  call_id: string;
+  recording_url?: string | null;
+  status: string;
+  created_at: string;
+};
+
 export type NavigationOutput = {
   origin: string;
   recommendation: string;

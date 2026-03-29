@@ -18,9 +18,11 @@ import { Bot, BrainCircuit, CheckCircle2, GitBranch, Sparkles, Wrench } from "lu
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAppCopy } from "@/lib/app-copy";
+import type { LatestContext } from "@/lib/latest-analysis";
+import { useUiLanguage } from "@/lib/use-ui-language";
 import { cn } from "@/lib/utils";
 import type { AnalyzeResponse, AgentStep } from "@shared/types";
-import type { LatestContext } from "@/lib/latest-analysis";
 
 type GraphNodeKind = "input" | "semantic" | "decision" | "agent" | "output";
 
@@ -280,6 +282,8 @@ function buildGraph({
 }
 
 export function AgentGraphPanel({ steps, analysis, context, visible }: AgentGraphPanelProps) {
+  const language = useUiLanguage();
+  const copy = getAppCopy(language).graph;
   const graph = useMemo(() => buildGraph({ steps, analysis, context }), [analysis, context, steps]);
 
   if (!visible) {
@@ -289,28 +293,24 @@ export function AgentGraphPanel({ steps, analysis, context, visible }: AgentGrap
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs uppercase tracking-[0.24em] text-slate-400">System graph</p>
-        <h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em] text-slate-950">Agent Graph</h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          This graph visualizes semantic understanding, branching decisions, agent specialization, and tool usage from the existing frontend trace.
-        </p>
+        <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{copy.eyebrow}</p>
+        <h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em] text-slate-950">{copy.title}</h1>
+        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">{copy.description}</p>
       </div>
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b border-slate-200/80 pb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-2xl tracking-[-0.03em]">Dynamic reasoning graph</CardTitle>
-              <CardDescription className="mt-2">
-                Judges can pan, zoom, and inspect each branch to see which specialist agent contributed and which tools were invoked.
-              </CardDescription>
+              <CardTitle className="text-2xl tracking-[-0.03em]">{copy.panelTitle}</CardTitle>
+              <CardDescription className="mt-2">{copy.panelDescription}</CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge>Input</Badge>
-              <Badge>Semantic</Badge>
-              <Badge>Decision</Badge>
-              <Badge>Agent</Badge>
-              <Badge variant="safe">Output</Badge>
+              <Badge>{copy.input}</Badge>
+              <Badge>{copy.semantic}</Badge>
+              <Badge>{copy.decision}</Badge>
+              <Badge>{copy.agent}</Badge>
+              <Badge variant="safe">{copy.output}</Badge>
             </div>
           </div>
         </CardHeader>

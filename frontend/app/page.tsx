@@ -103,6 +103,7 @@ export default function Page() {
   const [isTranslatingChat, setIsTranslatingChat] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const languageRef = useRef<UiLanguage>("en");
+  const voiceDraftRef = useRef("");
 
   const copy = useMemo(() => getUiCopy(language), [language]);
   const showCarePanel = Boolean(analysis && (uiBlocks.includes("care_options") || analysis.navigation.hospitals.length > 0));
@@ -199,12 +200,31 @@ export default function Page() {
 
     const recognition = new Recognition();
     recognition.lang = speechLocaleFor(language);
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.interimResults = true;
     recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript ?? "";
-      setInput(transcript);
-      setIsListening(false);
+      let finalized = "";
+      let interim = "";
+
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index] as ArrayLike<{ transcript: string }> & { isFinal?: boolean };
+        const transcript = result[0]?.transcript?.trim() ?? "";
+        if (!transcript) {
+          continue;
+        }
+        if (result.isFinal) {
+          finalized += `${transcript} `;
+        } else {
+          interim = transcript;
+        }
+      }
+
+      if (finalized.trim()) {
+        voiceDraftRef.current = `${voiceDraftRef.current} ${finalized}`.replace(/\s+/g, " ").trim();
+      }
+
+      const nextValue = `${voiceDraftRef.current} ${interim}`.replace(/\s+/g, " ").trim();
+      setInput(nextValue);
     };
     recognition.onend = () => setIsListening(false);
     recognitionRef.current = recognition;
@@ -334,6 +354,7 @@ export default function Page() {
       return;
     }
 
+    voiceDraftRef.current = input.trim();
     recognition.lang = speechLocaleFor(language);
     recognition.start();
     setIsListening(true);
@@ -358,9 +379,9 @@ export default function Page() {
             </div>
           </div>
         ) : null,
-        assistantTurn?.actions.length ? (
+        assistantTurn?.actions.filter((action) => action.intent !== "cost").length ? (
           <div key="actions" className="flex flex-wrap gap-3">
-            {assistantTurn.actions.map((action) => (
+            {assistantTurn.actions.filter((action) => action.intent !== "cost").map((action) => (
               <Button
                 key={action.intent}
                 variant="secondary"
@@ -373,6 +394,7 @@ export default function Page() {
         ) : null,
       ].filter(Boolean)
     : [];
+  const hasConversationStarted = messages.length > 0 || isTyping || embeddedMessages.length > 0;
 
   return (
     <main className="app-shell-gradient min-h-screen">
@@ -403,15 +425,19 @@ export default function Page() {
         <section className={`mx-auto mt-16 w-full ${showCarePanel ? "max-w-7xl" : "max-w-3xl"}`}>
           <div className={`grid gap-8 ${showCarePanel ? "lg:grid-cols-[minmax(0,1.05fr)_420px]" : "grid-cols-1"}`}>
             <div className="flex min-w-0 flex-col gap-6">
-              <ChatView
-                messages={messages}
-                isTyping={isTyping}
-                riskLevel={(session?.state.risk as "low" | "medium" | "high" | undefined) ?? analysis?.triage.risk_level}
-                title={isTyping ? copy.reviewingTitle : copy.conversationTitle}
-                assistantLabel={copy.careAssistant}
-                reviewingLabel={copy.reviewing}
-                embeddedMessages={embeddedMessages}
-              />
+              {hasConversationStarted ? (
+                <div className="animate-fade-in">
+                  <ChatView
+                    messages={messages}
+                    isTyping={isTyping}
+                    riskLevel={(session?.state.risk as "low" | "medium" | "high" | undefined) ?? analysis?.triage.risk_level}
+                    title={isTyping ? copy.reviewingTitle : copy.conversationTitle}
+                    assistantLabel={copy.careAssistant}
+                    reviewingLabel={copy.reviewing}
+                    embeddedMessages={embeddedMessages}
+                  />
+                </div>
+              ) : null}
 
               <div className="space-y-4">
                 <InputBar
@@ -458,6 +484,7 @@ export default function Page() {
                   <ConversationCareOptions
                     analysis={analysis}
                     copy={copy}
+                    chatHistory={messages}
                     defaultShowCosts={uiBlocks.includes("costs")}
                   />
                 </div>

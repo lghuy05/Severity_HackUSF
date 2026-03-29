@@ -3,6 +3,7 @@
 import { Loader2, Mic, SendHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type InputBarProps = {
@@ -43,9 +44,15 @@ export function InputBar({
       className={cn(
         "w-full rounded-[32px] border border-slate-200/80 bg-white/90 p-3 shadow-[0_28px_80px_rgba(148,163,184,0.16)] backdrop-blur-xl transition-all duration-300",
         compact ? "max-w-3xl" : "max-w-4xl",
+        isListening && "scale-[1.01] border-sky-200 shadow-[0_32px_100px_rgba(56,189,248,0.20)]",
       )}
     >
-      <div className="flex flex-col gap-3 rounded-[26px] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-4 py-4">
+      <div
+        className={cn(
+          "flex flex-col gap-3 rounded-[26px] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-4 py-4 transition-all duration-300",
+          isListening && "bg-[linear-gradient(180deg,#ffffff_0%,#eef8ff_100%)]",
+        )}
+      >
         <div className="flex items-center gap-2">
           <Button
             type="button"
@@ -92,12 +99,11 @@ export function InputBar({
             className="h-12 w-full bg-transparent text-sm text-slate-700 outline-none"
             aria-label="Select language"
           >
-            <option value="en">English</option>
-            <option value="es">Español</option>
-            <option value="fr">Français</option>
-            <option value="pt">Português</option>
-            <option value="vi">Tiếng Việt</option>
-            <option value="zh">中文</option>
+            {LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>

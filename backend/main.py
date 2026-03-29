@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 load_dotenv(ROOT / ".env")
 
 from backend.logging_config import configure_logging
+from backend.call_scheduling_router import router as call_scheduling_router
 from backend.firebase import firebase_backend_ready
 from backend.orchestrator import get_chat_session, run_analysis, run_chat_turn, run_communication, stream_chat_turn
 from backend.schemas import AnalyzeRequest, AnalyzeResponse, ChatSessionState, ChatTurnRequest, ChatTurnResponse, CommunicationRequest, CommunicationResponse
@@ -34,6 +35,7 @@ app.add_middleware(
 
 app.include_router(visit_assistant_router)
 app.include_router(user_profile_router)
+app.include_router(call_scheduling_router)
 
 
 @app.get("/health")

@@ -7,6 +7,9 @@ import { CheckCircle2, FilePlus2, Globe2, Languages, Loader2, Mic, Sparkles, Squ
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractVisitNote, saveVisitNote, summarizeVisitConversation, translateVisitTurn } from "@/lib/api";
+import { getAppCopy } from "@/lib/app-copy";
+import { LANGUAGE_OPTIONS as UI_LANGUAGE_OPTIONS } from "@/lib/i18n";
+import { useUiLanguage } from "@/lib/use-ui-language";
 import type { VisitStructuredNote, VisitTranslateTurnResponse } from "@shared/types";
 
 declare global {
@@ -41,14 +44,9 @@ const EMPTY_NOTE: VisitStructuredNote = {
 };
 
 const LANGUAGE_OPTIONS = [
-  { code: "en-US", label: "English" },
-  { code: "es-ES", label: "Spanish" },
-  { code: "fr-FR", label: "French" },
-  { code: "pt-BR", label: "Portuguese" },
-  { code: "vi-VN", label: "Vietnamese" },
-  { code: "ht-HT", label: "Haitian Creole" },
-  { code: "zh-CN", label: "Chinese" },
-  { code: "ar-SA", label: "Arabic" },
+  ...UI_LANGUAGE_OPTIONS.map((option) => ({ code: option.speech, label: option.label })),
+  { code: "ht-HT", label: "Kreyòl Ayisyen" },
+  { code: "ar-SA", label: "العربية" },
 ];
 
 type PageMode = "visit-summary" | "live-translator";
@@ -60,6 +58,8 @@ function languageLabel(code: string): string {
 }
 
 export default function VisitAssistantPage() {
+  const uiLanguage = useUiLanguage();
+  const pageCopy = getAppCopy(uiLanguage).visit;
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldKeepRecordingRef = useRef(false);
   const activeRecorderRef = useRef<"visit" | TranslatorSide | null>(null);
@@ -68,7 +68,7 @@ export default function VisitAssistantPage() {
   const translatorSourceBRef = useRef("");
   const translatorLanguageARef = useRef("en-US");
   const translatorLanguageBRef = useRef("es-ES");
-  const [mode, setMode] = useState<PageMode>("visit-summary");
+  const mode: PageMode = "live-translator";
   const [visitTranscript, setVisitTranscript] = useState("");
   const [visitInterimTranscript, setVisitInterimTranscript] = useState("");
   const [note, setNote] = useState<VisitStructuredNote | null>(null);
@@ -91,6 +91,8 @@ export default function VisitAssistantPage() {
   const [isTranslating, setIsTranslating] = useState<TranslatorSide | null>(null);
   const [translatorSummary, setTranslatorSummary] = useState("");
   const [translatorNote, setTranslatorNote] = useState<VisitStructuredNote | null>(null);
+  const [translatorNoteTitle, setTranslatorNoteTitle] = useState("");
+  const [savedTranslatorNoteId, setSavedTranslatorNoteId] = useState<string | null>(null);
   const [isSummarizingTranslator, setIsSummarizingTranslator] = useState(false);
   useEffect(() => {
     translatorLanguageARef.current = translatorLanguageA;
@@ -231,6 +233,7 @@ export default function VisitAssistantPage() {
 
   const canGenerate = visitTranscript.trim().length > 0 && !isGenerating;
   const canSaveNote = Boolean(note && conversationSummary.trim() && noteTitle.trim() && !isSavingNote);
+  const canSaveTranslatorNote = Boolean(translatorNote && translatorSummary.trim() && translatorNoteTitle.trim() && !isSavingNote);
   const symptoms = note?.symptoms ?? EMPTY_NOTE.symptoms;
   const actionItems = note?.action_items ?? EMPTY_NOTE.action_items;
 
@@ -243,6 +246,16 @@ export default function VisitAssistantPage() {
     }
     return "Ready to save this visit note to your record.";
   }, [note, noteTitle]);
+
+  const translatorSaveHint = useMemo(() => {
+    if (!translatorNote) {
+      return "Generate an AI summary first.";
+    }
+    if (!translatorNoteTitle.trim()) {
+      return "Name the translated conversation note before saving it.";
+    }
+    return "Ready to save this translated conversation note.";
+  }, [translatorNote, translatorNoteTitle]);
 
   function clearAllInterim() {
     setVisitInterimTranscript("");
@@ -431,6 +444,10 @@ export default function VisitAssistantPage() {
       ]);
       setTranslatorNote(noteResponse.note);
       setTranslatorSummary(summaryResponse.summary);
+      setSavedTranslatorNoteId(null);
+      if (!translatorNoteTitle.trim()) {
+        setTranslatorNoteTitle(`Translator note ${new Date().toLocaleDateString()}`);
+      }
     } catch {
       setError("AI summary could not be generated for the translated conversation.");
     } finally {
@@ -438,26 +455,39 @@ export default function VisitAssistantPage() {
     }
   }
 
+  async function handleSaveTranslatorNote() {
+    if (!translatorNote || !translatorSummary.trim() || !translatorNoteTitle.trim()) {
+      return;
+    }
+
+    setError("");
+    setIsSavingNote(true);
+    try {
+      const response = await saveVisitNote({
+        title: translatorNoteTitle.trim(),
+        transcript: buildTranslatorTranscript(translatorTurns),
+        summary: translatorSummary.trim(),
+        structured_note: translatorNote,
+      });
+      setSavedTranslatorNoteId(response.id);
+    } catch {
+      setError("Saving the translated conversation note failed.");
+    } finally {
+      setIsSavingNote(false);
+    }
+  }
+
   const visitDisplayTranscript = [visitTranscript, visitInterimTranscript].filter(Boolean).join(" ").trim();
   return (
     <main className="mx-auto flex min-h-[calc(100vh-88px)] w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
-      <section className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => setMode("visit-summary")}
-          className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${mode === "visit-summary" ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-600 hover:text-slate-950"}`}
-        >
-          <Stethoscope className="h-4 w-4" />
-          Visit Summary
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("live-translator")}
-          className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${mode === "live-translator" ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-600 hover:text-slate-950"}`}
-        >
+      <section className="flex flex-col gap-3">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700">
           <Languages className="h-4 w-4" />
-          Live Translator
-        </button>
+          {pageCopy.liveTranslator}
+        </div>
+        <p className="max-w-3xl text-sm leading-7 text-slate-600">
+          Use one live conversation flow for bilingual translation or same-language note capture. If both people speak Vietnamese, English, or any other supported language, select the same language on both sides.
+        </p>
       </section>
 
       {error ? (
@@ -466,7 +496,7 @@ export default function VisitAssistantPage() {
         </div>
       ) : null}
 
-      {mode === "visit-summary" ? (
+      {false ? (
         <>
           <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
             <Card className="overflow-hidden border-slate-200/80 bg-white/90">
@@ -626,7 +656,7 @@ export default function VisitAssistantPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><Globe2 className="h-5 w-5" /> Speaker A</CardTitle>
-                <CardDescription>Speak in Language A. When you stop, the translated message will appear for Speaker B and play aloud.</CardDescription>
+                <CardDescription>Select any language for Speaker A. You can choose the same language on both sides if you only want note capture.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <select value={translatorLanguageA} onChange={(event) => setTranslatorLanguageA(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-slate-300 focus:ring-4 focus:ring-sky-100">
@@ -644,7 +674,7 @@ export default function VisitAssistantPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><Globe2 className="h-5 w-5" /> Speaker B</CardTitle>
-                <CardDescription>Speak in Language B. When you stop, the translated message will appear for Speaker A and play aloud.</CardDescription>
+                <CardDescription>Select any language for Speaker B. Matching Speaker A is supported for same-language conversations.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <select value={translatorLanguageB} onChange={(event) => setTranslatorLanguageB(event.target.value)} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-slate-300 focus:ring-4 focus:ring-sky-100">
@@ -664,7 +694,7 @@ export default function VisitAssistantPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Conversation feed</CardTitle>
-                <CardDescription>Each spoken turn appears as a translated bubble for the other side. You can generate an AI summary from the accumulated conversation.</CardDescription>
+                <CardDescription>Each spoken turn appears here for note-taking. If the two sides use different languages, the translated output is shown for the other person.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex justify-end">
@@ -674,20 +704,26 @@ export default function VisitAssistantPage() {
                   </Button>
                 </div>
                 {translatorTurns.length > 0 ? translatorTurns.map((turn) => (
-                  <div key={turn.id} className={`flex ${turn.speaker === "a" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[80%] rounded-[28px] px-5 py-4 shadow-sm ${turn.speaker === "a" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-900"}`}>
+                  <div key={turn.id} className={`flex ${turn.speaker === "b" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] rounded-[28px] px-5 py-4 shadow-sm ${turn.speaker === "b" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-900"}`}>
                       <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${turn.speaker === "a" ? "text-slate-300" : "text-slate-500"}`}>
-                        {turn.speaker === "a" ? `For Speaker B • ${languageLabel(turn.target_language)}` : `For Speaker A • ${languageLabel(turn.target_language)}`}
+                        {turn.speaker === "a" ? "Speaker A" : "Speaker B"} • {languageLabel(turn.source_language)}
                       </p>
-                      <p className="mt-2 text-sm leading-6">{turn.translated_text}</p>
+                      <p className="mt-2 text-sm leading-6">{turn.source_text}</p>
+                      <div className={`mt-3 rounded-2xl px-4 py-3 text-sm leading-6 ${turn.speaker === "b" ? "bg-white/10 text-slate-100" : "bg-white text-slate-700"}`}>
+                        <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${turn.speaker === "b" ? "text-slate-300" : "text-slate-500"}`}>
+                          Translation for {turn.speaker === "a" ? "Speaker B" : "Speaker A"} • {languageLabel(turn.target_language)}
+                        </p>
+                        <p className="mt-2">{turn.translated_text}</p>
+                      </div>
                       <div className="mt-3 flex items-center justify-between gap-3">
-                        <p className={`text-xs ${turn.speaker === "a" ? "text-slate-400" : "text-slate-500"}`}>
+                        <p className={`text-xs ${turn.speaker === "b" ? "text-slate-400" : "text-slate-500"}`}>
                           Heard in {languageLabel(turn.source_language)}
                         </p>
                         <button
                           type="button"
                           onClick={() => speakText(turn.translated_text, turn.target_language)}
-                          className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-medium ${turn.speaker === "a" ? "bg-white/10 text-white hover:bg-white/15" : "bg-white text-slate-700 hover:text-slate-950"}`}
+                          className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-medium ${turn.speaker === "b" ? "bg-white/10 text-white hover:bg-white/15" : "bg-white text-slate-700 hover:text-slate-950"}`}
                         >
                           <Volume2 className="h-3.5 w-3.5" />
                           Replay
@@ -697,7 +733,7 @@ export default function VisitAssistantPage() {
                   </div>
                 )) : (
                   <div className="rounded-[24px] border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500">
-                    Start speaking on either side and stop manually. The translated turn will appear here as a chat bubble for the other person.
+                    Start speaking on either side and stop manually. Same-language conversations are supported, and bilingual turns will still appear as translated bubbles when needed.
                   </div>
                 )}
               </CardContent>
@@ -756,6 +792,42 @@ export default function VisitAssistantPage() {
               </Card>
             </section>
           ) : null}
+
+          <section>
+            <Card className="border-slate-200/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.96),rgba(30,41,59,0.96))] text-white shadow-[0_40px_100px_rgba(15,23,42,0.26)]">
+              <CardHeader>
+                <CardTitle className="text-2xl tracking-[-0.03em]">Save translated conversation note</CardTitle>
+                <CardDescription className="text-slate-300">
+                  Name this note, then store the translated conversation summary and extracted structured note under your user record.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium text-slate-200">Note title</span>
+                  <input
+                    value={translatorNoteTitle}
+                    onChange={(event) => setTranslatorNoteTitle(event.target.value)}
+                    className="h-12 w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 text-sm text-white outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-500/20"
+                    placeholder="Bilingual appointment note"
+                  />
+                </label>
+                <div className="rounded-[24px] border border-slate-700 bg-white/5 px-4 py-3 text-sm text-slate-300">{translatorSaveHint}</div>
+                <Button type="button" size="lg" onClick={handleSaveTranslatorNote} disabled={!canSaveTranslatorNote} className="w-full bg-white text-slate-950 hover:bg-slate-100">
+                  {isSavingNote ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FilePlus2 className="mr-2 h-4 w-4" />}
+                  Save translated note
+                </Button>
+                {savedTranslatorNoteId ? (
+                  <div className="rounded-[24px] border border-emerald-400/25 bg-emerald-400/10 px-4 py-4 text-sm text-emerald-50">
+                    <p className="flex items-center gap-2 font-medium"><CheckCircle2 className="h-4 w-4" /> Note saved</p>
+                    <p className="mt-1 text-emerald-100/80">This translated conversation note is now stored in your account.</p>
+                    <Link href="/records" className="mt-3 inline-flex text-sm font-medium text-white underline underline-offset-4">
+                      Open saved notes
+                    </Link>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </section>
         </>
       )}
     </main>

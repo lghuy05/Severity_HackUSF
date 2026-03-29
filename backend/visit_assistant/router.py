@@ -4,7 +4,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from tools.gemini_tool import GeminiToolError
 
-from backend.visit_assistant.note_store import list_visit_notes, save_visit_note
+from backend.visit_assistant.note_store import delete_visit_note, list_visit_notes, save_visit_note
 from backend.visit_assistant.schemas import (
     VisitExtractNoteRequest,
     VisitExtractNoteResponse,
@@ -96,3 +96,14 @@ def save_note_route(
         return save_visit_note(_require_user_id(x_user_id), request)
     except VisitAssistantError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/notes/{note_id}")
+def delete_note_route(
+    note_id: str,
+    x_user_id: str | None = Header(default=None, alias="x-user-id"),
+) -> dict[str, bool]:
+    deleted = delete_visit_note(_require_user_id(x_user_id), note_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"deleted": True}

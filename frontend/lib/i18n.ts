@@ -2,7 +2,7 @@
 
 import type { AnalyzeResponse, RiskLevel } from "@shared/types";
 
-export type UiLanguage = "en" | "es" | "fr" | "pt" | "vi" | "zh";
+export type UiLanguage = "en" | "es" | "fr" | "pt" | "vi" | "zh" | "de" | "hi" | "ru" | "ja";
 
 export const LANGUAGE_OPTIONS: Array<{ value: UiLanguage; label: string; speech: string }> = [
   { value: "en", label: "English", speech: "en-US" },
@@ -11,6 +11,10 @@ export const LANGUAGE_OPTIONS: Array<{ value: UiLanguage; label: string; speech:
   { value: "pt", label: "Português", speech: "pt-BR" },
   { value: "vi", label: "Tiếng Việt", speech: "vi-VN" },
   { value: "zh", label: "中文", speech: "zh-CN" },
+  { value: "de", label: "Deutsch", speech: "de-DE" },
+  { value: "hi", label: "हिन्दी", speech: "hi-IN" },
+  { value: "ru", label: "Русский", speech: "ru-RU" },
+  { value: "ja", label: "日本語", speech: "ja-JP" },
 ];
 
 type TranslationSet = {
@@ -74,12 +78,16 @@ function riskWord(language: UiLanguage, risk: RiskLevel) {
     pt: { low: "baixo", medium: "médio", high: "alto" },
     vi: { low: "thấp", medium: "trung bình", high: "cao" },
     zh: { low: "低", medium: "中", high: "高" },
+    de: { low: "niedrig", medium: "mittel", high: "hoch" },
+    hi: { low: "कम", medium: "मध्यम", high: "उच्च" },
+    ru: { low: "низкий", medium: "средний", high: "высокий" },
+    ja: { low: "低", medium: "中", high: "高" },
   };
 
   return table[language][risk];
 }
 
-export const UI_COPY: Record<UiLanguage, TranslationSet> = {
+export const UI_COPY: Partial<Record<UiLanguage, TranslationSet>> = {
   en: {
     appBadge: "AI healthcare navigator",
     headline: "Clear guidance from symptoms to next steps.",
@@ -431,7 +439,7 @@ export const UI_COPY: Record<UiLanguage, TranslationSet> = {
 };
 
 export function getUiCopy(language: UiLanguage) {
-  return UI_COPY[language];
+  return UI_COPY[language] ?? UI_COPY.en!;
 }
 
 export function speechLocaleFor(language: UiLanguage) {

@@ -73,3 +73,23 @@ def save_visit_note(user_id: str, request: VisitSaveNoteRequest) -> VisitSavedNo
             _save_file_notes(notes_by_user)
 
     return note
+
+
+def delete_visit_note(user_id: str, note_id: str) -> bool:
+    try:
+        document = _collection(user_id).document(note_id)
+        snapshot = document.get()
+        if not snapshot.exists:
+            return False
+        document.delete()
+        return True
+    except FirebaseConfigError:
+        with _NOTES_LOCK:
+            notes_by_user = _load_file_notes()
+            user_notes = notes_by_user.get(user_id, [])
+            remaining = [item for item in user_notes if item.get("id") != note_id]
+            deleted = len(remaining) != len(user_notes)
+            if deleted:
+                notes_by_user[user_id] = remaining
+                _save_file_notes(notes_by_user)
+            return deleted
