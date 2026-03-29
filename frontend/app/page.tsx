@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Globe2, MessageSquarePlus, Mic, ShieldAlert } from "lucide-react";
+import { MessageSquarePlus, ShieldAlert } from "lucide-react";
 
 import { ChatView } from "@/components/ChatView";
 import { ConversationCareOptions } from "@/components/ConversationCareOptions";
@@ -459,16 +459,6 @@ export default function Page() {
                 <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-slate-500">
                   {profile.location ? <span>{copy.locationUsing(profile.location)}</span> : null}
                   {isTranslatingChat ? <span>Translating current chat...</span> : null}
-                  <span className="inline-flex items-center gap-2">
-                    <Mic className="h-4 w-4 text-slate-400" />
-                    {voiceAvailable ? copy.voiceReady : copy.voiceUnavailable}
-                  </span>
-                  <span className="inline-flex items-center gap-2">
-                    <Globe2 className="h-4 w-4 text-slate-400" />
-                    {language.toUpperCase()}
-                  </span>
-                  {profile.age ? <span>Age {profile.age}</span> : null}
-                  {profile.gender ? <span>{profile.gender}</span> : null}
                   {!profile.location ? (
                     <Button asChild variant="ghost" className="h-auto px-0 text-sm text-sky-700 hover:text-sky-800">
                       <Link href="/profile">Add your location in profile</Link>
@@ -493,11 +483,6 @@ export default function Page() {
           </div>
         </section>
 
-        <div className="mt-10 flex justify-center">
-          <Button asChild variant="ghost" className="text-slate-500">
-            <Link href="/agent-graph">{copy.systemView}</Link>
-          </Button>
-        </div>
       </div>
     </main>
   );
